@@ -528,24 +528,6 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
     }
   };
 
-  const handleSetOneMinuteTimer = async () => {
-    try {
-      const res = await fetch('/api/testing/set-timer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ auctionId, durationSeconds: 60 }),
-      });
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        onShowToast('info', 'Timer Set to 1 Minute', '⏱️ Deadline set to 1m from now. Test bidding, countdown & anti-sniping!');
-        fetchDetails();
-      } else {
-        onShowToast('error', 'Error', data.error || 'Failed to set timer');
-      }
-    } catch {
-      onShowToast('error', 'Error', 'Failed to connect to server');
-    }
-  };
 
   return (
     <div className="app-body-container">
@@ -744,26 +726,7 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
             </div>
 
             <div>
-              <div className="metric-col-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>Time Remaining</span>
-                <button
-                  type="button"
-                  onClick={handleSetOneMinuteTimer}
-                  title="Test anti-sniping & countdown: set deadline to 1 minute from now"
-                  style={{
-                    background: '#fef3c7',
-                    border: '1px solid #fde68a',
-                    color: '#92400e',
-                    fontSize: '0.62rem',
-                    padding: '1px 5px',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontWeight: 700,
-                  }}
-                >
-                  ⚡ Set 1m (Test)
-                </button>
-              </div>
+              <div className="metric-col-title">Time Remaining</div>
               <div className="metric-col-val timer">⏱ {timeLeft.formatted}</div>
               <div className="metric-subtext">Live countdown</div>
             </div>

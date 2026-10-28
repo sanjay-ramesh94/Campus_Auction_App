@@ -17,12 +17,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  const handleSelectQuickAccount = (r: any) => {
-    setEmail(r.email);
-    setPassword('password123');
-    setError(null);
-    setSuccessMsg(null);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -336,47 +330,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
             </form>
           )}
 
-          {/* Quick Roster Account Chips for 1-Click Evaluation */}
-          <div className="test-accounts-panel">
-            <div className="test-accounts-title">1-Click Test Accounts from Roster:</div>
-            <div className="test-chips">
-              <button
-                type="button"
-                className="test-chip"
-                onClick={() => handleSelectQuickAccount({ email: 'seller.sam@campus.edu' })}
-              >
-                Sam (Seller · Sem 8)
-              </button>
-              <button
-                type="button"
-                className="test-chip"
-                onClick={() => handleSelectQuickAccount({ email: 'buyer.bob@campus.edu' })}
-              >
-                Bob (Buyer · Sem 4)
-              </button>
-              <button
-                type="button"
-                className="test-chip"
-                onClick={() => handleSelectQuickAccount({ email: 'atchayaa.21alr@kongu.edu' })}
-              >
-                Atchaya (Sem 7 Seller)
-              </button>
-              <button
-                type="button"
-                className="test-chip"
-                onClick={() => handleSelectQuickAccount({ email: 'sreesanthc.25mtr@kongu.edu' })}
-              >
-                Sreesanth (Sem 1 Buyer)
-              </button>
-              <button
-                type="button"
-                className="test-chip"
-                onClick={() => handleSelectQuickAccount({ email: 'unassigned.student@campus.edu' })}
-              >
-                Invalid Sem (Contact Admin)
-              </button>
-            </div>
-          </div>
+
         </div>
       </div>
     </div>
