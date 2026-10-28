@@ -25,7 +25,7 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
   const [condition, setCondition] = useState('Good Condition');
   const [startPrice, setStartPrice] = useState<number>(500);
   const [minIncrement, setMinIncrement] = useState<number>(50);
-  const [duration, setDuration] = useState('1 Day');
+  const [duration, setDuration] = useState('1 Minute (Testing)');
   const [images, setImages] = useState<string[]>([]);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -142,11 +142,15 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
 
     setCreating(true);
 
-    let hours = 24;
-    if (duration === '3 Days') hours = 72;
-    else if (duration === '7 Days') hours = 168;
-
-    const closesAt = new Date(Date.now() + hours * 3600 * 1000).toISOString();
+    let closesAt: string;
+    if (duration === '1 Minute (Testing)') {
+      closesAt = new Date(Date.now() + 60 * 1000).toISOString();
+    } else {
+      let hours = 24;
+      if (duration === '3 Days') hours = 72;
+      else if (duration === '7 Days') hours = 168;
+      closesAt = new Date(Date.now() + hours * 3600 * 1000).toISOString();
+    }
 
     const listingImages = images.length > 0
       ? images
@@ -365,6 +369,7 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
                       value={duration}
                       onChange={(e) => setDuration(e.target.value)}
                     >
+                      <option value="1 Minute (Testing)">⏱️ 1 Minute (Testing)</option>
                       <option value="1 Day">1 Day (24 Hours)</option>
                       <option value="3 Days">3 Days</option>
                       <option value="7 Days">7 Days</option>

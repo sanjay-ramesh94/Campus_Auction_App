@@ -168,6 +168,7 @@ export function App() {
 
   const handleSelectAuction = (id: string) => {
     setSelectedAuctionId(id);
+    window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
   // If not logged in, display Screen 1 (Login Page)
@@ -231,8 +232,8 @@ export function App() {
               />
             )}
 
-            {/* Screen 4: Seller / Create Listing Page */}
-            {(activeTab === 'sell' || activeTab === 'dashboard') && (
+            {/* Screen 4: Seller / Create Listing Page (Seller Only) */}
+            {(activeTab === 'sell' || activeTab === 'dashboard') && user.role === 'seller' && (
               <SellerDashboard
                 user={user}
                 token={token}
@@ -241,8 +242,8 @@ export function App() {
               />
             )}
 
-            {/* AI Assistant Tab */}
-            {activeTab === 'ai_assistant' && (
+            {/* AI Assistant Tab (Buyer Only) */}
+            {activeTab === 'ai_assistant' && user.role !== 'seller' && (
               <div className="app-body-container">
                 <AiAssistantTab token={token} showToast={showToast} />
               </div>

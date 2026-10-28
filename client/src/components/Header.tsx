@@ -85,18 +85,22 @@ export const Header: React.FC<HeaderProps> = ({
             >
               My Bids
             </button>
-            <button
-              className={`header-tab-btn ${activeTab === 'sell' || activeTab === 'dashboard' ? 'active' : ''}`}
-              onClick={() => handleTabClick('sell')}
-            >
-              Sell
-            </button>
-            <button
-              className={`header-tab-btn ${activeTab === 'ai_assistant' ? 'active' : ''}`}
-              onClick={() => handleTabClick('ai_assistant')}
-            >
-              AI Assistant
-            </button>
+            {user.role === 'seller' && (
+              <button
+                className={`header-tab-btn ${activeTab === 'sell' || activeTab === 'dashboard' ? 'active' : ''}`}
+                onClick={() => handleTabClick('sell')}
+              >
+                Sell
+              </button>
+            )}
+            {user.role !== 'seller' && (
+              <button
+                className={`header-tab-btn ${activeTab === 'ai_assistant' ? 'active' : ''}`}
+                onClick={() => handleTabClick('ai_assistant')}
+              >
+                AI Assistant
+              </button>
+            )}
           </nav>
 
           {/* Right Header Controls */}

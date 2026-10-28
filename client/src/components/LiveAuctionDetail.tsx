@@ -29,6 +29,8 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
   const bidsLimit = 10;
   const [filterBidderId, setFilterBidderId] = useState<string | null>(null);
   const [totalBidsCount, setTotalBidsCount] = useState<number>(0);
+  // Live Bid History scrolling limit options: 'limit-5', 'limit-10', 'all'
+  const [historyLimitMode, setHistoryLimitMode] = useState<'limit-5' | 'limit-10' | 'all'>('limit-5');
 
   // Temporary Live Room Presence (In-memory presence)
   const [presenceUsers, setPresenceUsers] = useState<PublicPresenceUser[]>([]);
@@ -240,7 +242,8 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
           event.type === 'OUTBID' ||
           event.type === 'DEADLINE_EXTENDED' ||
           event.type === 'AUTO_BID_TRIGGERED' ||
-          event.type === 'AUCTION_MAX_REACHED'
+          event.type === 'AUCTION_MAX_REACHED' ||
+          event.type === 'TIMER_UPDATED'
         ) {
           fetchDetails();
           fetchBids(bidsPage, filterBidderId);
@@ -312,7 +315,7 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
       let str = '';
       if (days > 0) str = `${days}d ${hours}h`;
       else if (hours > 0) str = `${hours}h ${minutes}m`;
-      else str = `${minutes}m ${seconds}s`;
+      else str = `${minutes}m ${seconds < 10 ? '0' : ''}${seconds}s`;
 
       setTimeLeft({ m: minutes, s: seconds, formatted: str });
     };
@@ -321,6 +324,11 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
     const t = setInterval(updateTimer, 1000);
     return () => clearInterval(t);
   }, [auction?.closesAt]);
+ 
+  // Scroll to top on auction view mount
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, [auctionId]);
 
   if (!auction) {
     return (
@@ -514,6 +522,25 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
     }
   };
 
+  const handleSetOneMinuteTimer = async () => {
+    try {
+      const res = await fetch('/api/testing/set-timer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auctionId, durationSeconds: 60 }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        onShowToast('info', 'Timer Set to 1 Minute', '⏱️ Deadline set to 1m from now. Test bidding, countdown & anti-sniping!');
+        fetchDetails();
+      } else {
+        onShowToast('error', 'Error', data.error || 'Failed to set timer');
+      }
+    } catch {
+      onShowToast('error', 'Error', 'Failed to connect to server');
+    }
+  };
+
   return (
     <div className="app-body-container">
       {/* Breadcrumb Navigation */}
@@ -527,8 +554,8 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
 
       {/* 2-Column Detail Layout */}
       <div className="auction-detail-layout">
-        {/* Left Column: Gallery & Details */}
-        <div>
+        {/* Left Column: Gallery, Specs & Q&A */}
+        <div className="auction-detail-left-col">
           {/* Main Photo */}
           <div className="detail-gallery-main">
             <img src={images[activeImageIdx] || images[0]} alt={auction.title} />
@@ -562,10 +589,103 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
               <div className="meta-col-val">Oct 25, 2026</div>
             </div>
           </div>
+
+          {/* Q&A Section */}
+          <div className="detail-qa-card">
+            <div className="detail-qa-header">
+              <h3 className="detail-qa-title">Questions & Answers</h3>
+              <span className="detail-qa-badge">
+                {questions.length} {questions.length === 1 ? 'question' : 'questions'}
+              </span>
+            </div>
+
+            {/* Existing Questions */}
+            {questions.length === 0 ? (
+              <p className="detail-qa-empty">
+                No questions asked yet. Have an inquiry about condition, pickup, or accessories?
+              </p>
+            ) : (
+              <div className="detail-qa-list">
+                {questions.map((q) => (
+                  <div key={q._id} className="detail-qa-item">
+                    <div className="qa-q-text">
+                      <span className="qa-tag-q">Q:</span> {q.text}
+                    </div>
+                    {q.answer ? (
+                      <div className="qa-a-text">
+                        <span className="qa-tag-a">A:</span> {q.answer}
+                      </div>
+                    ) : isSeller ? (
+                      answeringQId === q._id ? (
+                        <div style={{ marginTop: '0.5rem' }}>
+                          <input
+                            type="text"
+                            className="input-field"
+                            placeholder="Type your reply..."
+                            value={answerText}
+                            onChange={(e) => setAnswerText(e.target.value)}
+                            style={{ height: '36px', marginBottom: '0.4rem' }}
+                          />
+                          <button
+                            type="button"
+                            className="btn-primary-dark"
+                            style={{ height: '34px' }}
+                            onClick={() => handleAnswerQuestion(q._id)}
+                          >
+                            Submit Answer
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="qa-answer-trigger-btn"
+                          onClick={() => setAnsweringQId(q._id)}
+                        >
+                          💬 Answer this question
+                        </button>
+                      )
+                    ) : (
+                      <div className="qa-awaiting-text">
+                        ⏳ Awaiting seller response
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Ask Question Form */}
+            {!isSeller && (
+              <form onSubmit={handleAskQuestion} className="detail-qa-form">
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="Ask seller a question about this item..."
+                    value={newQuestionText}
+                    onChange={(e) => handleQuestionInput(e.target.value)}
+                  />
+                </div>
+                {similarQuestion && (
+                  <div className="qa-similar-warning">
+                    ⚠️ Similar question found: "{similarQuestion}"
+                  </div>
+                )}
+                <button
+                  type="submit"
+                  className="btn-primary-dark"
+                  style={{ marginTop: '0.5rem', height: '40px' }}
+                  disabled={!newQuestionText.trim()}
+                >
+                  Submit Question
+                </button>
+              </form>
+            )}
+          </div>
         </div>
 
         {/* Right Column: Title, Seller, Metrics & Bidding */}
-        <div>
+        <div className="auction-detail-right-col">
           {/* Header & Favorite */}
           <div className="detail-info-header">
             <h1 className="detail-title">{auction.title}</h1>
@@ -618,7 +738,26 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
             </div>
 
             <div>
-              <div className="metric-col-title">Time Remaining</div>
+              <div className="metric-col-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>Time Remaining</span>
+                <button
+                  type="button"
+                  onClick={handleSetOneMinuteTimer}
+                  title="Test anti-sniping & countdown: set deadline to 1 minute from now"
+                  style={{
+                    background: '#fef3c7',
+                    border: '1px solid #fde68a',
+                    color: '#92400e',
+                    fontSize: '0.62rem',
+                    padding: '1px 5px',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontWeight: 700,
+                  }}
+                >
+                  ⚡ Set 1m (Test)
+                </button>
+              </div>
               <div className="metric-col-val timer">⏱ {timeLeft.formatted}</div>
               <div className="metric-subtext">Live countdown</div>
             </div>
@@ -934,23 +1073,54 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
                 </div>
               </div>
 
-              {filterBidderId && (
-                <div className="bid-filter-indicator">
-                  <span>
-                    Filtered by{' '}
-                    <strong>
-                      {participants.find((p) => p.id === filterBidderId)?.name || 'Selected Bidder'}
-                    </strong>
-                  </span>
+              <div className="bid-history-header-actions">
+                {/* Scrolling Limit Options */}
+                <div className="bid-scroll-options-pill" title="Set height limit with internal scrolling">
+                  <span className="bid-scroll-label">Scroll limit:</span>
                   <button
-                    className="bid-filter-clear-btn"
-                    onClick={handleClearFilter}
-                    title="View all bids"
+                    type="button"
+                    className={`bid-scroll-opt-btn ${historyLimitMode === 'limit-5' ? 'active' : ''}`}
+                    onClick={() => setHistoryLimitMode('limit-5')}
+                    title="Limit to 5 bids with smooth scrolling"
                   >
-                    Clear Filter
+                    5 rows
+                  </button>
+                  <button
+                    type="button"
+                    className={`bid-scroll-opt-btn ${historyLimitMode === 'limit-10' ? 'active' : ''}`}
+                    onClick={() => setHistoryLimitMode('limit-10')}
+                    title="Limit to 10 bids with smooth scrolling"
+                  >
+                    10 rows
+                  </button>
+                  <button
+                    type="button"
+                    className={`bid-scroll-opt-btn ${historyLimitMode === 'all' ? 'active' : ''}`}
+                    onClick={() => setHistoryLimitMode('all')}
+                    title="Show all bids without scroll cap"
+                  >
+                    All
                   </button>
                 </div>
-              )}
+
+                {filterBidderId && (
+                  <div className="bid-filter-indicator">
+                    <span>
+                      Filtered by{' '}
+                      <strong>
+                        {participants.find((p) => p.id === filterBidderId)?.name || 'Selected Bidder'}
+                      </strong>
+                    </span>
+                    <button
+                      className="bid-filter-clear-btn"
+                      onClick={handleClearFilter}
+                      title="View all bids"
+                    >
+                      Clear Filter
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Bids Table or Empty State */}
@@ -972,7 +1142,7 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
               </div>
             ) : (
               <>
-                <div className="bid-history-table-container">
+                <div className={`bid-history-table-container scroll-${historyLimitMode}`}>
                   <table className="bid-history-table">
                     <thead>
                       <tr>
@@ -1046,6 +1216,13 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
                   </table>
                 </div>
 
+                {/* Subtle Scroll Hint Bar when rows exceed visible limit */}
+                {historyLimitMode !== 'all' && bids.length > (historyLimitMode === 'limit-5' ? 5 : 10) && (
+                  <div className="bid-scroll-hint-bar">
+                    <span>↕ Showing {historyLimitMode === 'limit-5' ? 5 : 10} rows with scrollbar · Scroll inside table to view all {bids.length} bids</span>
+                  </div>
+                )}
+
                 {/* Pagination Controls */}
                 {bidsTotal > bidsLimit && (
                   <div className="bid-history-pagination">
@@ -1072,88 +1249,6 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
                   </div>
                 )}
               </>
-            )}
-          </div>
-
-          {/* Q&A Section */}
-          <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '1.25rem', marginTop: '1.5rem' }}>
-            <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '0.85rem' }}>Questions & Answers</h3>
-
-            {/* Existing Questions */}
-            {questions.length === 0 ? (
-              <p style={{ fontSize: '0.82rem', color: '#94a3b8', marginBottom: '1rem' }}>
-                No questions asked yet. Have an inquiry about condition, pickup, or accessories?
-              </p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', marginBottom: '1.25rem' }}>
-                {questions.map((q) => (
-                  <div key={q._id} style={{ padding: '0.75rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #f1f5f9' }}>
-                    <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#0f172a' }}>
-                      Q: {q.text}
-                    </div>
-                    {q.answer ? (
-                      <div style={{ fontSize: '0.82rem', color: '#059669', marginTop: '0.35rem', background: '#ecfdf5', padding: '0.45rem', borderRadius: '6px' }}>
-                        <strong>A:</strong> {q.answer}
-                      </div>
-                    ) : isSeller ? (
-                      answeringQId === q._id ? (
-                        <div style={{ marginTop: '0.5rem' }}>
-                          <input
-                            type="text"
-                            className="input-field"
-                            placeholder="Type your reply..."
-                            value={answerText}
-                            onChange={(e) => setAnswerText(e.target.value)}
-                            style={{ height: '36px', marginBottom: '0.4rem' }}
-                          />
-                          <button className="btn-primary-dark" style={{ height: '34px' }} onClick={() => handleAnswerQuestion(q._id)}>
-                            Submit Answer
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          style={{ marginTop: '0.4rem', background: 'none', border: 'none', color: '#0f172a', fontWeight: 600, fontSize: '0.78rem', cursor: 'pointer' }}
-                          onClick={() => setAnsweringQId(q._id)}
-                        >
-                          💬 Answer this question
-                        </button>
-                      )
-                    ) : (
-                      <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.25rem' }}>
-                        Awaiting seller response
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Ask Question Form */}
-            {!isSeller && (
-              <form onSubmit={handleAskQuestion}>
-                <div style={{ position: 'relative' }}>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="Ask seller a question about this item..."
-                    value={newQuestionText}
-                    onChange={(e) => handleQuestionInput(e.target.value)}
-                  />
-                </div>
-                {similarQuestion && (
-                  <div style={{ fontSize: '0.75rem', color: '#b45309', background: '#fef3c7', padding: '0.4rem 0.6rem', borderRadius: '6px', marginTop: '0.4rem' }}>
-                    ⚠️ Similar question found: "{similarQuestion}"
-                  </div>
-                )}
-                <button
-                  type="submit"
-                  className="btn-primary-dark"
-                  style={{ marginTop: '0.5rem', height: '40px' }}
-                  disabled={!newQuestionText.trim()}
-                >
-                  Submit Question
-                </button>
-              </form>
             )}
           </div>
         </div>

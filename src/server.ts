@@ -677,11 +677,16 @@ async function startDevServer() {
         if (minIncrement <= 0) {
           return sendJson(res, 400, { ok: false, error: 'Minimum increment must be greater than ₹0' });
         }
-        if (durationMinutes <= 0) {
+        if (durationMinutes <= 0 && !p.closesAt) {
           return sendJson(res, 400, { ok: false, error: 'Closing time must be in the future' });
         }
 
-        const closesAt = new Date(Date.now() + durationMinutes * 60 * 1000);
+        let closesAt: Date;
+        if (p.closesAt) {
+          closesAt = new Date(p.closesAt);
+        } else {
+          closesAt = new Date(Date.now() + durationMinutes * 60 * 1000);
+        }
 
         const newAuction: Auction = {
           _id: new ObjectId(),
@@ -733,6 +738,59 @@ async function startDevServer() {
         return sendJson(res, 201, { ok: true, auction: newAuction });
       } catch (err: any) {
         return sendJson(res, 500, { ok: false, error: err.message });
+      }
+    }
+
+    // Testing Endpoint: Reset / set auction timer (e.g. to 1 minute for testing)
+    if (url.pathname === '/api/testing/set-timer' && req.method === 'POST') {
+      try {
+        const body = await readBody(req);
+        const { auctionId, durationSeconds } = body;
+        if (!auctionId) {
+          return sendJson(res, 400, { ok: false, error: 'auctionId is required' });
+        }
+
+        const sec = typeof durationSeconds === 'number' && durationSeconds > 0 ? durationSeconds : 60;
+        const newDeadline = new Date(Date.now() + sec * 1000);
+
+        const result = await cols.auctions.findOneAndUpdate(
+          { _id: new ObjectId(auctionId) },
+          {
+            $set: {
+              closesAt: newDeadline,
+              status: 'active',
+              updatedAt: new Date(),
+            },
+          },
+          { returnDocument: 'after' }
+        );
+
+        if (!result) {
+          return sendJson(res, 404, { ok: false, error: 'Auction not found' });
+        }
+
+        // Broadcast SSE timer update to all clients watching this auction
+        const payload = {
+          type: 'TIMER_UPDATED',
+          auctionId,
+          closesAt: newDeadline,
+          status: 'active',
+        };
+        const data = `data: ${JSON.stringify(payload)}\n\n`;
+        for (const client of sseClients) {
+          try {
+            client.write(data);
+          } catch {}
+        }
+
+        return sendJson(res, 200, {
+          ok: true,
+          message: `Timer set to ${sec} seconds from now`,
+          closesAt: newDeadline,
+          status: 'active',
+        });
+      } catch (err: any) {
+        return sendJson(res, 500, { ok: false, error: err?.message || 'Server error' });
       }
     }
 
