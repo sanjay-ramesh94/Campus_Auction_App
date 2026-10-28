@@ -43,6 +43,9 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
   const [bidAmount, setBidAmount] = useState<number>(0);
   const [bidding, setBidding] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
 
   // Active avatar popover
   const [activePopoverId, setActivePopoverId] = useState<string | null>(null);
@@ -347,8 +350,42 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
     : auction.currentPrice + auction.minIncrement;
   const isLeader = auction.leaderId && auction.leaderId === user.id;
   const isSeller = user.role === 'seller';
+  const isSellerOwner = isSeller && (
+    (typeof auction.sellerId === 'string' && auction.sellerId === user.id) ||
+    ((auction.sellerId as any)?._id?.toString() === user.id) ||
+    (typeof (auction.sellerId as any)?.toString === 'function' && (auction.sellerId as any).toString() === user.id) ||
+    (seller && seller.id === user.id)
+  );
   // Auction is open if status is 'active' OR 'live' (newly created auctions start as 'live')
   const isClosed = auction.status !== 'active' && auction.status !== 'live';
+
+  const handleStopAuction = async () => {
+    if (!token) return;
+    setCancelling(true);
+    try {
+      const res = await fetch(`/api/seller/auctions/${auction._id}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ reason: cancelReason.trim() || 'Cancelled by seller' }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        onShowToast('success', 'Auction Stopped', `"${auction.title}" has been cancelled and bidding stopped.`);
+        setShowCancelModal(false);
+        setCancelReason('');
+        fetchDetails();
+      } else {
+        onShowToast('error', 'Error', data.error || 'Failed to stop auction');
+      }
+    } catch {
+      onShowToast('error', 'Error', 'Failed to connect to server');
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const images = auction.images && auction.images.length > 0
     ? auction.images
@@ -1057,13 +1094,44 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
                 </div>
               )
             ) : (
-              <div style={{ padding: '1rem', background: '#fef3c7', borderRadius: '10px', color: '#92400e', fontSize: '0.88rem', marginBottom: '1.5rem' }}>
-                ℹ️ <strong>Seller Mode:</strong> As a registered seller, bidding is disabled for you. You can review buyer offers, track countdowns, and answer questions.
+              <div style={{ padding: '1rem', background: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '1.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '0.9rem', color: '#0f172a' }}>
+                      🏷️ Seller Management Console
+                    </div>
+                    <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '0.15rem' }}>
+                      {auction.status === 'cancelled'
+                        ? 'This auction was cancelled and bidding is stopped.'
+                        : isClosed
+                        ? 'Auction has concluded.'
+                        : 'Auction is live. You can monitor bids or stop bidding at any time.'}
+                    </div>
+                  </div>
+                  {isSellerOwner && !isClosed && (
+                    <button
+                      type="button"
+                      className="btn-outline-action"
+                      style={{
+                        borderColor: '#ef4444',
+                        color: '#ef4444',
+                        fontWeight: 600,
+                        padding: '0.45rem 0.9rem',
+                        fontSize: '0.82rem',
+                        background: '#fff',
+                        cursor: 'pointer',
+                      }}
+                      onClick={() => setShowCancelModal(true)}
+                    >
+                      🛑 Stop / Cancel Auction
+                    </button>
+                  )}
+                </div>
               </div>
             )
           ) : (
             <div style={{ padding: '1rem', background: '#f1f5f9', borderRadius: '10px', color: '#64748b', fontSize: '0.88rem', marginBottom: '1.5rem' }}>
-              🔒 <strong>Auction Closed:</strong> Bidding for this listing has concluded.
+              🔒 <strong>Auction Closed:</strong> {auction.status === 'cancelled' ? 'This auction was cancelled by the seller.' : 'Bidding for this listing has concluded.'}
             </div>
           )}
 
@@ -1293,6 +1361,56 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
                 onClick={() => setShowConfirmModal(false)}
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Seller Stop / Cancel Auction Modal */}
+      {showCancelModal && (
+        <div className="modal-overlay" onClick={() => setShowCancelModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ color: '#b91c1c' }}>🛑 Stop Bidding / Cancel Auction</h3>
+              <button className="modal-close-btn" onClick={() => setShowCancelModal(false)}>×</button>
+            </div>
+            <p style={{ fontSize: '0.9rem', color: '#475569', marginBottom: '1rem' }}>
+              Are you sure you want to stop bidding and cancel this auction?
+              <br />
+              <strong style={{ color: '#0f172a' }}>"{auction.title}"</strong>
+              <br /><br />
+              All bidding will stop immediately. Any existing bidders will be notified.
+            </p>
+            <div style={{ marginBottom: '1.25rem' }}>
+              <label className="form-label" style={{ fontSize: '0.82rem', marginBottom: '0.35rem', display: 'block' }}>
+                Reason for Cancellation (Optional)
+              </label>
+              <input
+                type="text"
+                className="input-field"
+                placeholder="e.g. Item no longer available, error in description"
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="btn-outline-action"
+                onClick={() => setShowCancelModal(false)}
+                disabled={cancelling}
+              >
+                Keep Live
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                style={{ background: '#dc2626', borderColor: '#dc2626', color: '#fff' }}
+                onClick={handleStopAuction}
+                disabled={cancelling}
+              >
+                {cancelling ? 'Stopping...' : 'Yes, Stop Auction'}
               </button>
             </div>
           </div>

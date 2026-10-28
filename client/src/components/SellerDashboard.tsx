@@ -34,6 +34,11 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
   const [relistDuration, setRelistDuration] = useState<number>(15);
   const [relisting, setRelisting] = useState(false);
 
+  // Stop / Cancel modal state
+  const [cancellingAuction, setCancellingAuction] = useState<Auction | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
+
   // Create Listing Form state
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('Electronics');
@@ -175,8 +180,38 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
       }
     } catch {
       onShowToast('error', 'Error', 'Failed to relist auction');
+      } finally {
+        setRelisting(false);
+      }
+    };
+
+  // Submit Stop / Cancel Auction
+  const handleStopAuctionSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cancellingAuction || !token) return;
+    setCancelling(true);
+    try {
+      const res = await fetch(`/api/seller/auctions/${cancellingAuction._id}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ reason: cancelReason.trim() || 'Cancelled by seller' }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        onShowToast('success', 'Auction Cancelled', `"${cancellingAuction.title}" has been stopped.`);
+        setCancellingAuction(null);
+        setCancelReason('');
+        fetchSellerAuctions();
+      } else {
+        onShowToast('error', 'Error', data.error || 'Failed to stop auction');
+      }
+    } catch {
+      onShowToast('error', 'Error', 'Failed to connect to server');
     } finally {
-      setRelisting(false);
+      setCancelling(false);
     }
   };
 
@@ -641,6 +676,22 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
                               }}
                             >
                               Live Console
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-outline-action"
+                              style={{
+                                borderColor: '#ef4444',
+                                color: '#ef4444',
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setCancellingAuction(item);
+                                setCancelReason('');
+                              }}
+                              title="Stop bidding and cancel this auction"
+                            >
+                              Stop
                             </button>
                           </div>
                         </div>
@@ -1164,6 +1215,57 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
                   style={{ minWidth: '130px' }}
                 >
                   {relisting ? 'Relisting...' : 'Relist Auction'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Stop / Cancel Auction Modal */}
+      {cancellingAuction && (
+        <div className="modal-overlay" onClick={() => setCancellingAuction(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ color: '#b91c1c' }}>🛑 Stop Bidding / Cancel Listing</h3>
+              <button className="modal-close-btn" onClick={() => setCancellingAuction(null)}>×</button>
+            </div>
+            <p style={{ fontSize: '0.9rem', color: '#475569', marginBottom: '1rem' }}>
+              Are you sure you want to stop bidding and cancel:
+              <br />
+              <strong style={{ color: '#0f172a' }}>"{cancellingAuction.title}"</strong>
+              <br /><br />
+              Bidding will immediately stop and this auction will be moved to your <em>Not Attended (Unsold)</em> list, where you can relist it later if desired.
+            </p>
+            <form onSubmit={handleStopAuctionSubmit}>
+              <div style={{ marginBottom: '1.25rem' }}>
+                <label className="form-label" style={{ fontSize: '0.82rem', marginBottom: '0.35rem', display: 'block' }}>
+                  Reason for Cancellation (Optional)
+                </label>
+                <input
+                  type="text"
+                  className="input-field"
+                  placeholder="e.g. Item defective, duplicate listing, no longer available"
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  className="btn-outline-action"
+                  onClick={() => setCancellingAuction(null)}
+                  disabled={cancelling}
+                >
+                  Keep Live
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  style={{ background: '#dc2626', borderColor: '#dc2626', color: '#fff' }}
+                  disabled={cancelling}
+                >
+                  {cancelling ? 'Stopping...' : 'Yes, Stop Auction'}
                 </button>
               </div>
             </form>

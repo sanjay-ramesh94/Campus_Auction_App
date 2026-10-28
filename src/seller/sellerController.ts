@@ -52,7 +52,7 @@ export async function getSellerAuctions(
   } else if (status === 'sold') {
     filter.status = { $in: ['closed_sold', 'sold', 'pending_approval', 'reserved'] };
   } else if (status === 'unsold') {
-    filter.status = { $in: ['closed_unsold', 'unsold'] };
+    filter.status = { $in: ['closed_unsold', 'unsold', 'cancelled'] };
   }
 
   const safePage = Math.max(1, page);
