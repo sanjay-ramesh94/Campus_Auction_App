@@ -165,8 +165,10 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
           setPresentAway(data.presence.awayCount || 0);
         }
 
-        const cur = data.auction.currentPrice || data.auction.startPrice;
-        const nextMin = cur + data.auction.minIncrement;
+        // Match server nextMinBid: first bid = startPrice, subsequent = currentPrice + minIncrement
+        const nextMin = data.auction.currentPrice === null
+          ? data.auction.startPrice
+          : data.auction.currentPrice + data.auction.minIncrement;
         setBidAmount(nextMin);
         setAutoBidMax(nextMin + data.auction.minIncrement * 3);
       }
@@ -338,11 +340,15 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
     );
   }
 
-  const curPrice = auction.currentPrice || auction.startPrice;
-  const minValidBid = curPrice + auction.minIncrement;
+  const curPrice = auction.currentPrice ?? auction.startPrice;
+  // Match server nextMinBid: first bid = startPrice; subsequent = currentPrice + minIncrement
+  const minValidBid = auction.currentPrice === null
+    ? auction.startPrice
+    : auction.currentPrice + auction.minIncrement;
   const isLeader = auction.leaderId && auction.leaderId === user.id;
   const isSeller = user.role === 'seller';
-  const isClosed = auction.status !== 'active';
+  // Auction is open if status is 'active' OR 'live' (newly created auctions start as 'live')
+  const isClosed = auction.status !== 'active' && auction.status !== 'live';
 
   const images = auction.images && auction.images.length > 0
     ? auction.images
