@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { Auction, User, LiveBidParticipant, Question } from '../types';
+import type { Auction, User, LiveBidParticipant, Question, BidHistoryItem } from '../types';
 
 interface LiveAuctionDetailProps {
   auctionId: string;
@@ -19,8 +19,16 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
   const [auction, setAuction] = useState<Auction | null>(null);
   const [seller, setSeller] = useState<{ id: string; name: string; yearBranch: string; verified: boolean } | null>(null);
   const [participants, setParticipants] = useState<LiveBidParticipant[]>([]);
-  const [uniqueCount, setUniqueCount] = useState<number>(8);
-  const [currentHighestBid, setCurrentHighestBid] = useState<number>(800);
+  const [uniqueCount, setUniqueCount] = useState<number>(0);
+  const [currentHighestBid, setCurrentHighestBid] = useState<number>(0);
+
+  // Live Bid History state
+  const [bids, setBids] = useState<BidHistoryItem[]>([]);
+  const [bidsTotal, setBidsTotal] = useState<number>(0);
+  const [bidsPage, setBidsPage] = useState<number>(1);
+  const bidsLimit = 10;
+  const [filterBidderId, setFilterBidderId] = useState<string | null>(null);
+  const [totalBidsCount, setTotalBidsCount] = useState<number>(0);
 
   const [activeImageIdx, setActiveImageIdx] = useState(0);
   const [isFavorite, setIsFavorite] = useState(false);
@@ -48,6 +56,42 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
     formatted: '27m 4s',
   });
 
+  // Human-readable local timestamp formatter with date when appropriate
+  const formatBidTimestamp = (isoString: string): string => {
+    try {
+      const d = new Date(isoString);
+      if (isNaN(d.getTime())) return 'Recently';
+
+      const now = new Date();
+      const isToday =
+        d.getDate() === now.getDate() &&
+        d.getMonth() === now.getMonth() &&
+        d.getFullYear() === now.getFullYear();
+
+      const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+      if (isToday) {
+        return `Today at ${timeStr}`;
+      }
+
+      const yesterday = new Date(now);
+      yesterday.setDate(now.getDate() - 1);
+      const isYesterday =
+        d.getDate() === yesterday.getDate() &&
+        d.getMonth() === yesterday.getMonth() &&
+        d.getFullYear() === yesterday.getFullYear();
+
+      if (isYesterday) {
+        return `Yesterday at ${timeStr}`;
+      }
+
+      const dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+      return `${dateStr}, ${timeStr}`;
+    } catch {
+      return 'Recently';
+    }
+  };
+
   // Fetch auction details
   const fetchDetails = async () => {
     try {
@@ -61,7 +105,8 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
         setAuction(data.auction);
         if (data.seller) setSeller(data.seller);
         if (data.participants) setParticipants(data.participants);
-        if (data.uniqueCount) setUniqueCount(data.uniqueCount);
+        if (typeof data.uniqueCount === 'number') setUniqueCount(data.uniqueCount);
+        if (typeof data.totalBidsCount === 'number') setTotalBidsCount(data.totalBidsCount);
         if (data.currentHighestBid) setCurrentHighestBid(data.currentHighestBid);
 
         const cur = data.auction.currentPrice || data.auction.startPrice;
@@ -74,6 +119,28 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
     }
   };
 
+  // Fetch complete accepted bids history
+  const fetchBids = async (page = bidsPage, bidderId = filterBidderId) => {
+    try {
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      let url = `/api/auctions/${auctionId}/bids?page=${page}&limit=${bidsLimit}`;
+      if (bidderId) url += `&bidderId=${encodeURIComponent(bidderId)}`;
+
+      const res = await fetch(url, { headers });
+      const data = await res.json();
+      if (data.ok) {
+        setBids(data.bids || []);
+        setBidsTotal(data.total || 0);
+        if (data.participants) setParticipants(data.participants);
+        if (typeof data.uniqueParticipantsCount === 'number') setUniqueCount(data.uniqueParticipantsCount);
+        if (typeof data.totalBidsCount === 'number') setTotalBidsCount(data.totalBidsCount);
+        if (typeof data.currentHighestBid === 'number') setCurrentHighestBid(data.currentHighestBid);
+      }
+    } catch {}
+  };
+
   const fetchQuestions = async () => {
     try {
       const res = await fetch(`/api/questions?auctionId=${auctionId}`);
@@ -82,37 +149,51 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
     } catch {}
   };
 
-  // Live polling for auction details & Q&A every 2.5s
+  // Live polling for auction details, bids & Q&A every 2.5s
   useEffect(() => {
     fetchDetails();
+    fetchBids(bidsPage, filterBidderId);
     fetchQuestions();
     const interval = setInterval(() => {
       fetchDetails();
+      fetchBids(bidsPage, filterBidderId);
       fetchQuestions();
     }, 2500);
     return () => clearInterval(interval);
-  }, [auctionId, token]);
+  }, [auctionId, token, bidsPage, filterBidderId]);
 
-  // Real-time instant SSE listener for questions, answers, and bids
+  // Real-time instant SSE listener for questions, answers, and bids with reconnect recovery
   useEffect(() => {
     const es = new EventSource('/api/events');
+    es.onopen = () => {
+      // On reconnect or initial connection, refetch authoritative state
+      fetchDetails();
+      fetchBids(bidsPage, filterBidderId);
+      fetchQuestions();
+    };
     es.onmessage = (e) => {
       try {
         const event = JSON.parse(e.data);
         if (
           event.auctionId === auctionId ||
-          event.type === 'QUESTION_ASKED' ||
-          event.type === 'QUESTION_ANSWERED' ||
           event.type === 'BID_PLACED' ||
-          event.type === 'DEADLINE_EXTENDED'
+          event.type === 'OUTBID' ||
+          event.type === 'DEADLINE_EXTENDED' ||
+          event.type === 'AUTO_BID_TRIGGERED' ||
+          event.type === 'AUCTION_MAX_REACHED'
+        ) {
+          fetchDetails();
+          fetchBids(bidsPage, filterBidderId);
+        } else if (
+          event.type === 'QUESTION_ASKED' ||
+          event.type === 'QUESTION_ANSWERED'
         ) {
           fetchQuestions();
-          fetchDetails();
         }
       } catch {}
     };
     return () => es.close();
-  }, [auctionId]);
+  }, [auctionId, bidsPage, filterBidderId]);
 
   // Click outside listener for participant popovers
   useEffect(() => {
@@ -211,6 +292,7 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
       if (res.ok && data.ok) {
         onShowToast('success', 'Bid Placed! 🎉', `You are now the highest bidder at ₹${bidAmount}`);
         fetchDetails();
+        fetchBids(1, filterBidderId);
       } else {
         onShowToast('error', 'Bid Rejected', data.error || data.reason || 'Failed to place bid');
       }
@@ -243,11 +325,47 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
       if (res.ok && data.ok) {
         onShowToast('success', 'Auto-Bid Configured! 🤖', `Proxy will bid up to ₹${autoBidMax} to keep you leading`);
         setShowAutoBid(false);
+        fetchDetails();
+        fetchBids(1, filterBidderId);
       } else {
         onShowToast('error', 'Error', data.error || 'Failed to set auto-bid');
       }
     } catch {
       onShowToast('error', 'Network Error', 'Could not reach server');
+    }
+  };
+
+  // Participant avatar click filters the live bid history to that student's bids
+  const handleParticipantClick = (participantId: string) => {
+    setActivePopoverId(prev => (prev === participantId ? null : participantId));
+    setFilterBidderId(prev => {
+      const next = prev === participantId ? null : participantId;
+      setBidsPage(1);
+      fetchBids(1, next);
+      return next;
+    });
+  };
+
+  const handleClearFilter = () => {
+    setFilterBidderId(null);
+    setActivePopoverId(null);
+    setBidsPage(1);
+    fetchBids(1, null);
+  };
+
+  const totalPages = Math.ceil(bidsTotal / bidsLimit) || 1;
+  const handlePrevPage = () => {
+    if (bidsPage > 1) {
+      const next = bidsPage - 1;
+      setBidsPage(next);
+      fetchBids(next, filterBidderId);
+    }
+  };
+  const handleNextPage = () => {
+    if (bidsPage < totalPages) {
+      const next = bidsPage + 1;
+      setBidsPage(next);
+      fetchBids(next, filterBidderId);
     }
   };
 
@@ -440,74 +558,91 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
 
             {/* Circular Avatars Row */}
             <div className="participants-avatars-row">
-              {participants.slice(0, 5).map((p, idx) => {
-                const colorClass = p.isYou
-                  ? 'avatar-you'
-                  : idx === 0
-                  ? 'avatar-ak'
-                  : idx === 1
-                  ? 'avatar-rk'
-                  : idx === 2
-                  ? 'avatar-mp'
-                  : 'avatar-sj';
+              {participants.length === 0 ? (
+                <div style={{ color: '#94a3b8', fontSize: '0.85rem', padding: '0.75rem 0' }}>
+                  No bids placed yet. Place the opening bid to be the first participant!
+                </div>
+              ) : (
+                <>
+                  {participants.slice(0, 6).map((p, idx) => {
+                    const avatarColorClass = p.isYou
+                      ? 'avatar-color-0'
+                      : `avatar-color-${(idx + 1) % 7}`;
+                    const isSelected = filterBidderId === p.id;
+                    const isPopoverOpen = activePopoverId === p.id;
 
-                const isPopoverOpen = activePopoverId === p.id;
-
-                return (
-                  <div
-                    key={p.id}
-                    className="participant-avatar-wrapper"
-                    onClick={() => setActivePopoverId(isPopoverOpen ? null : p.id)}
-                  >
-                    <div className={`participant-avatar-circle ${colorClass}`}>
-                      {p.initials}
-                    </div>
-                    <div className="participant-avatar-label">
-                      {p.isYou ? 'You' : p.name.split(' ')[0]}
-                    </div>
-
-                    {/* Popover on click */}
-                    {isPopoverOpen && (
-                      <div className="participant-popover" onClick={(e) => e.stopPropagation()}>
-                        <div className="popover-arrow" />
-                        <div className="popover-name">{p.name} {p.isYou ? '(You)' : ''}</div>
-                        <div className="popover-branch">{p.yearBranch}</div>
-                        <div className="popover-bid-row">
-                          <span style={{ color: '#cbd5e1' }}>Highest: ₹{p.highestBid}</span>
-                          <span className={`popover-status-badge ${p.status}`}>
-                            {p.status === 'leading' ? 'Leading' : 'Outbid'}
-                          </span>
+                    return (
+                      <div
+                        key={p.id}
+                        className={`participant-avatar-wrapper ${isSelected ? 'active-filter' : ''}`}
+                        onClick={() => handleParticipantClick(p.id)}
+                        title={`Click to filter bids by ${p.name}`}
+                      >
+                        <div className={`participant-avatar-circle ${avatarColorClass}`}>
+                          {p.initials}
                         </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                        <div className="participant-avatar-label">
+                          {p.isYou ? 'You' : p.name.split(' ')[0]}
+                        </div>
 
-              {/* +3 More circle */}
-              <div
-                className="participant-avatar-wrapper"
-                onClick={() =>
-                  onShowToast(
-                    'info',
-                    'Active Bidders',
-                    `${uniqueCount} registered campus students are participating in this live auction.`
-                  )
-                }
-              >
-                <div className="participant-avatar-circle avatar-more">+3</div>
-                <div className="participant-avatar-label">More</div>
-              </div>
+                        {/* Popover on click */}
+                        {isPopoverOpen && (
+                          <div className="participant-popover" onClick={(e) => e.stopPropagation()}>
+                            <div className="popover-arrow" />
+                            <div className="popover-name">
+                              {p.name} {p.isYou ? '(You)' : ''}
+                            </div>
+                            <div className="popover-branch">{p.yearBranch}</div>
+                            <div className="popover-bid-row">
+                              <span style={{ color: '#cbd5e1' }}>Highest: ₹{p.highestBid.toLocaleString()}</span>
+                              <span className={`popover-status-badge ${p.status}`}>
+                                {p.status === 'leading' ? 'Leading' : 'Outbid'}
+                              </span>
+                            </div>
+                            <div style={{ marginTop: '0.4rem', fontSize: '0.72rem', color: '#94a3b8', textAlign: 'center' }}>
+                              {p.bidCount || 1} bids placed · Click to {isSelected ? 'clear filter' : 'filter'}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {participants.length > 6 && (
+                    <div
+                      className="participant-avatar-wrapper"
+                      onClick={() =>
+                        onShowToast(
+                          'info',
+                          'Active Bidders',
+                          `${uniqueCount} registered campus students have placed bids on this listing.`
+                        )
+                      }
+                      title={`${participants.length - 6} more bidders`}
+                    >
+                      <div className="participant-avatar-circle avatar-more">
+                        +{participants.length - 6}
+                      </div>
+                      <div className="participant-avatar-label">More</div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
             {/* Divider line */}
             <div className="live-participants-divider" />
 
-            {/* Footer Summary */}
+            {/* Footer Summary with separate Unique Participants and Total Bids */}
             <div className="live-participants-footer">
               <div className="participants-count-block">
                 <div className="count-label">Unique participants</div>
                 <div className="count-val">{uniqueCount} students</div>
+              </div>
+
+              <div className="participants-count-block" style={{ textAlign: 'center' }}>
+                <div className="count-label">Total bids placed</div>
+                <div className="count-val">{totalBidsCount} bids</div>
               </div>
 
               <div className="highest-bid-block">
@@ -628,6 +763,163 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
               🔒 <strong>Auction Closed:</strong> Bidding for this listing has concluded.
             </div>
           )}
+
+          {/* ============================================================
+              LIVE BID HISTORY SECTION
+              ============================================================ */}
+          <div className="bid-history-card">
+            <div className="bid-history-header">
+              <div className="bid-history-title-group">
+                <h3 className="bid-history-title">Live Bid History</h3>
+                <span className="bid-history-count-badge">
+                  {bidsTotal} {bidsTotal === 1 ? 'accepted bid' : 'accepted bids'}
+                </span>
+                <div className="live-badge-pill" style={{ padding: '0.1rem 0.45rem', fontSize: '0.65rem' }}>
+                  <span className="live-dot-pulse" />
+                  <span>SYNCED</span>
+                </div>
+              </div>
+
+              {filterBidderId && (
+                <div className="bid-filter-indicator">
+                  <span>
+                    Filtered by{' '}
+                    <strong>
+                      {participants.find((p) => p.id === filterBidderId)?.name || 'Selected Bidder'}
+                    </strong>
+                  </span>
+                  <button
+                    className="bid-filter-clear-btn"
+                    onClick={handleClearFilter}
+                    title="View all bids"
+                  >
+                    Clear Filter
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Bids Table or Empty State */}
+            {bids.length === 0 ? (
+              <div className="bid-history-empty">
+                <div className="bid-history-empty-icon">🏷️</div>
+                <div style={{ fontWeight: 600, color: '#0f172a', marginBottom: '0.25rem' }}>
+                  {filterBidderId ? 'No bids found for this student.' : 'No bids placed yet.'}
+                </div>
+                <div style={{ fontSize: '0.82rem', color: '#64748b' }}>
+                  {filterBidderId ? (
+                    <button className="bid-filter-clear-btn" onClick={handleClearFilter}>
+                      Reset filter to see all bids
+                    </button>
+                  ) : (
+                    'Place the opening bid above to take the lead!'
+                  )}
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="bid-history-table-container">
+                  <table className="bid-history-table">
+                    <thead>
+                      <tr>
+                        <th>Bidder</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>Type</th>
+                        <th style={{ textAlign: 'right' }}>Placed At</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bids.map((b, idx) => {
+                        const avatarClass = b.isYou ? 'avatar-color-0' : `avatar-color-${(idx + 1) % 7}`;
+                        return (
+                          <tr
+                            key={b._id}
+                            className={`bid-history-row ${b.isLeading ? 'leading-row' : ''}`}
+                          >
+                            <td>
+                              <div className="bidder-info-cell">
+                                <div className={`bidder-avatar-sm ${avatarClass}`}>
+                                  {b.bidderInitials}
+                                </div>
+                                <div className="bidder-name-group">
+                                  <div className="bidder-name-text">
+                                    <span>{b.bidderName}</span>
+                                    {b.isLeading && (
+                                      <span style={{ fontSize: '0.7rem', color: '#059669', fontWeight: 700 }}>
+                                        ★
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="bidder-subtext">{b.bidderYearBranch || 'Campus Student'}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td>
+                              <div className={`bid-amount-text ${b.isLeading ? 'leading' : ''}`}>
+                                ₹{b.amount.toLocaleString()}
+                              </div>
+                            </td>
+                            <td>
+                              {b.isLeading ? (
+                                <span className="bid-badge leading">
+                                  <span>✓</span> Leading
+                                </span>
+                              ) : (
+                                <span className="bid-badge outbid">
+                                  Outbid
+                                </span>
+                              )}
+                            </td>
+                            <td>
+                              {b.source === 'auto' ? (
+                                <span className="bid-badge auto" title="Placed automatically via Auto-Bid Proxy">
+                                  ⚡ Auto-bid
+                                </span>
+                              ) : (
+                                <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Manual</span>
+                              )}
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              <span className="bid-time-text" title={new Date(b.createdAt || b.serverTs).toLocaleString()}>
+                                {formatBidTimestamp(b.createdAt || b.serverTs)}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination Controls */}
+                {bidsTotal > bidsLimit && (
+                  <div className="bid-history-pagination">
+                    <div className="bid-pagination-info">
+                      Showing {(bidsPage - 1) * bidsLimit + 1}–
+                      {Math.min(bidsPage * bidsLimit, bidsTotal)} of {bidsTotal} bids
+                    </div>
+                    <div className="bid-pagination-actions">
+                      <button
+                        className="bid-page-btn"
+                        onClick={handlePrevPage}
+                        disabled={bidsPage <= 1}
+                      >
+                        ← Previous
+                      </button>
+                      <button
+                        className="bid-page-btn"
+                        onClick={handleNextPage}
+                        disabled={bidsPage >= totalPages}
+                      >
+                        Next →
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
 
           {/* Q&A Section */}
           <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '1.25rem', marginTop: '1.5rem' }}>

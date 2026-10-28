@@ -876,15 +876,207 @@ async function startDevServer() {
       return sendJson(res, 200, { ok: true, auctions });
     }
 
-    // Single Auction Details (Enriched with Seller Info and Live Bid Participants)
-    if (url.pathname.startsWith('/api/auctions/') && req.method === 'GET') {
-      const auctionId = url.pathname.split('/').pop();
+    // Complete Live Bid History with Pagination & Optional Bidder Filtering
+    // GET /api/auctions/:auctionId/bids?page=1&limit=20&bidderId=...
+    const bidsRouteMatch = url.pathname.match(/^\/api\/auctions\/([a-fA-F0-9]{24})\/bids$/);
+    if (bidsRouteMatch && req.method === 'GET') {
+      const auctionId = bidsRouteMatch[1];
       try {
         const aId = new ObjectId(auctionId);
         const auction = await cols.auctions.findOne({ _id: aId });
         if (!auction) return sendJson(res, 404, { ok: false, error: 'Auction not found' });
 
         const auth = getAuthUser(req);
+        const currentUserId = auth ? auth.userId : null;
+
+        const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10));
+        const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '20', 10)));
+        const bidderIdParam = url.searchParams.get('bidderId');
+
+        // Query criteria for bids
+        const query: any = { auctionId: aId };
+        if (bidderIdParam && ObjectId.isValid(bidderIdParam)) {
+          query.bidderId = new ObjectId(bidderIdParam);
+        }
+
+        const totalBids = await cols.bids.countDocuments(query);
+        const rawBids = await cols.bids
+          .find(query)
+          .sort({ serverTs: -1, _id: -1 })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .toArray();
+
+        // Batch look up unique bidder IDs to enrich with display names without leaking private data
+        const uniqueBidderIds = Array.from(new Set(rawBids.map((b) => b.bidderId.toString()))).map((id) => new ObjectId(id));
+        const usersDocs = await cols.users.find({ _id: { $in: uniqueBidderIds } }).toArray();
+        const rosterDocs = await cols.authorizedStudents.find({ _id: { $in: uniqueBidderIds } }).toArray();
+
+        const userMap = new Map<string, { name: string; sem: number; dept: string }>();
+        for (const u of usersDocs) {
+          userMap.set(u._id.toString(), {
+            name: u.name,
+            sem: u.sem,
+            dept: u.department || 'Campus',
+          });
+        }
+        for (const r of rosterDocs) {
+          const idStr = r._id.toString();
+          if (!userMap.has(idStr)) {
+            const rName = r.name || (r as any).Name || 'Student Bidder';
+            const rSem = r.sem ?? (r as any).Sem ?? 4;
+            const rDept = (r as any).department || (r as any).Branch || 'Campus';
+            userMap.set(idStr, { name: rName, sem: rSem, dept: rDept });
+          }
+        }
+
+        // Identify current leading bid
+        const leaderIdStr = auction.leaderId ? auction.leaderId.toString() : null;
+
+        const formattedBids = rawBids.map((b) => {
+          const bIdStr = b.bidderId.toString();
+          const info = userMap.get(bIdStr);
+          const isYou = Boolean(currentUserId && currentUserId === bIdStr);
+          const name = info?.name || (isYou ? 'You' : 'Student Bidder');
+          const initials = name
+            .split(' ')
+            .map((p) => p[0])
+            .join('')
+            .slice(0, 2)
+            .toUpperCase() || 'SB';
+          const sem = info?.sem ?? 4;
+          const dept = info?.dept || 'Campus';
+          const yearStr = sem >= 7 ? '4th Year' : sem >= 5 ? '3rd Year' : sem >= 3 ? '2nd Year' : '1st Year';
+
+          const isLeading = Boolean(
+            leaderIdStr && leaderIdStr === bIdStr && b.amount === auction.currentPrice
+          );
+
+          const ts = (b as any).createdAt || b.serverTs || new Date();
+
+          return {
+            _id: b._id.toString(),
+            auctionId: b.auctionId.toString(),
+            bidderId: bIdStr,
+            bidderName: isYou ? `${name} (You)` : name,
+            bidderInitials: initials,
+            bidderYearBranch: `${yearStr} · ${dept}`,
+            amount: b.amount,
+            serverTs: b.serverTs ? b.serverTs.toISOString() : ts.toISOString(),
+            createdAt: ts.toISOString(),
+            source: b.source || 'manual',
+            isLeading,
+            isYou,
+          };
+        });
+
+        // Compute authoritative unique participants list from actual accepted bids
+        const allAuctionBids = await cols.bids.find({ auctionId: aId }).sort({ amount: -1, serverTs: -1 }).toArray();
+        const allBidderIds = Array.from(new Set(allAuctionBids.map((b) => b.bidderId.toString()))).map((id) => new ObjectId(id));
+        const allUsersDocs = await cols.users.find({ _id: { $in: allBidderIds } }).toArray();
+        const allRosterDocs = await cols.authorizedStudents.find({ _id: { $in: allBidderIds } }).toArray();
+
+        const allUserMap = new Map<string, { name: string; sem: number; dept: string }>();
+        for (const u of allUsersDocs) {
+          allUserMap.set(u._id.toString(), { name: u.name, sem: u.sem, dept: u.department || 'Campus' });
+        }
+        for (const r of allRosterDocs) {
+          const idStr = r._id.toString();
+          if (!allUserMap.has(idStr)) {
+            const rName = r.name || (r as any).Name || 'Student Bidder';
+            const rSem = r.sem ?? (r as any).Sem ?? 4;
+            const rDept = (r as any).department || (r as any).Branch || 'Campus';
+            allUserMap.set(idStr, { name: rName, sem: rSem, dept: rDept });
+          }
+        }
+
+        const participantMap = new Map<
+          string,
+          {
+            id: string;
+            name: string;
+            initials: string;
+            yearBranch: string;
+            highestBid: number;
+            bidCount: number;
+            status: 'leading' | 'outbid';
+            isYou: boolean;
+          }
+        >();
+
+        for (const b of allAuctionBids) {
+          const bIdStr = b.bidderId.toString();
+          const isLeader = Boolean(auction.leaderId && auction.leaderId.equals(b.bidderId));
+          const isYou = Boolean(currentUserId && currentUserId === bIdStr);
+
+          if (!participantMap.has(bIdStr)) {
+            const info = allUserMap.get(bIdStr);
+            const name = info?.name || (isYou ? 'You' : 'Student Bidder');
+            const initials = name
+              .split(' ')
+              .map((p) => p[0])
+              .join('')
+              .slice(0, 2)
+              .toUpperCase() || 'SB';
+            const sem = info?.sem ?? 4;
+            const dept = info?.dept || 'Campus';
+            const yearStr = sem >= 7 ? '4th Year' : sem >= 5 ? '3rd Year' : sem >= 3 ? '2nd Year' : '1st Year';
+
+            participantMap.set(bIdStr, {
+              id: bIdStr,
+              name: isYou ? `${name} (You)` : name,
+              initials,
+              yearBranch: `${yearStr} · ${dept}`,
+              highestBid: b.amount,
+              bidCount: 1,
+              status: isLeader ? 'leading' : 'outbid',
+              isYou,
+            });
+          } else {
+            const item = participantMap.get(bIdStr)!;
+            item.bidCount += 1;
+            if (b.amount > item.highestBid) {
+              item.highestBid = b.amount;
+            }
+          }
+        }
+
+        const participants = Array.from(participantMap.values());
+        participants.sort((a, b) => {
+          if (a.status === 'leading') return -1;
+          if (b.status === 'leading') return 1;
+          return b.highestBid - a.highestBid;
+        });
+
+        return sendJson(res, 200, {
+          ok: true,
+          bids: formattedBids,
+          total: totalBids,
+          page,
+          limit,
+          hasMore: page * limit < totalBids,
+          participants,
+          uniqueParticipantsCount: participants.length,
+          totalBidsCount: allAuctionBids.length,
+          currentHighestBid: auction.currentPrice || auction.startPrice,
+          leaderId: leaderIdStr,
+        });
+      } catch {
+        return sendJson(res, 400, { ok: false, error: 'Invalid auction id' });
+      }
+    }
+
+    // Single Auction Details (Enriched with Seller Info and Authoritative Live Bid Participants)
+    const auctionDetailMatch = url.pathname.match(/^\/api\/auctions\/([a-fA-F0-9]{24})$/);
+    if (auctionDetailMatch && req.method === 'GET') {
+      const auctionId = auctionDetailMatch[1];
+      try {
+        const aId = new ObjectId(auctionId);
+        const auction = await cols.auctions.findOne({ _id: aId });
+        if (!auction) return sendJson(res, 404, { ok: false, error: 'Auction not found' });
+
+        const auth = getAuthUser(req);
+        const currentUserId = auth ? auth.userId : null;
 
         // Fetch seller details
         let sellerInfo = {
@@ -909,8 +1101,26 @@ async function startDevServer() {
           };
         }
 
-        // Fetch real bids for this auction
-        const bids = await cols.bids.find({ auctionId: aId }).sort({ amount: -1 }).toArray();
+        // Fetch real accepted bids for this auction (authoritative, no fabricated mockups)
+        const bids = await cols.bids.find({ auctionId: aId }).sort({ amount: -1, serverTs: -1 }).toArray();
+        const bidderIds = Array.from(new Set(bids.map((b) => b.bidderId.toString()))).map((id) => new ObjectId(id));
+        const usersDocs = await cols.users.find({ _id: { $in: bidderIds } }).toArray();
+        const rosterDocs = await cols.authorizedStudents.find({ _id: { $in: bidderIds } }).toArray();
+
+        const userMap = new Map<string, { name: string; sem: number; dept: string }>();
+        for (const u of usersDocs) {
+          userMap.set(u._id.toString(), { name: u.name, sem: u.sem, dept: u.department || 'Campus' });
+        }
+        for (const r of rosterDocs) {
+          const idStr = r._id.toString();
+          if (!userMap.has(idStr)) {
+            const rName = r.name || (r as any).Name || 'Student Bidder';
+            const rSem = r.sem ?? (r as any).Sem ?? 4;
+            const rDept = (r as any).department || (r as any).Branch || 'Campus';
+            userMap.set(idStr, { name: rName, sem: rSem, dept: rDept });
+          }
+        }
+
         const participantMap = new Map<
           string,
           {
@@ -919,6 +1129,7 @@ async function startDevServer() {
             initials: string;
             yearBranch: string;
             highestBid: number;
+            bidCount: number;
             status: 'leading' | 'outbid';
             isYou: boolean;
           }
@@ -926,84 +1137,57 @@ async function startDevServer() {
 
         for (const b of bids) {
           const bIdStr = b.bidderId.toString();
+          const isLeader = Boolean(auction.leaderId && auction.leaderId.equals(b.bidderId));
+          const isYou = Boolean(currentUserId && currentUserId === bIdStr);
+
           if (!participantMap.has(bIdStr)) {
-            const isLeader = Boolean(auction.leaderId && auction.leaderId.equals(b.bidderId));
-            const isYou = Boolean(auth && auth.userId === bIdStr);
-            const bidderUser =
-              (await cols.users.findOne({ _id: b.bidderId })) ||
-              (await cols.authorizedStudents.findOne({ _id: b.bidderId }));
-            const name = bidderUser?.name || (isYou ? 'You' : 'Student Bidder');
-            const initials =
-              name
-                .split(' ')
-                .map((n: string) => n[0])
-                .join('')
-                .slice(0, 2)
-                .toUpperCase() || 'SB';
-            const sem = (bidderUser as any)?.sem ?? (bidderUser as any)?.Sem ?? 4;
-            const dept = (bidderUser as any)?.department ?? (bidderUser as any)?.Branch ?? 'CSE';
+            const info = userMap.get(bIdStr);
+            const name = info?.name || (isYou ? 'You' : 'Student Bidder');
+            const initials = name
+              .split(' ')
+              .map((p) => p[0])
+              .join('')
+              .slice(0, 2)
+              .toUpperCase() || 'SB';
+            const sem = info?.sem ?? 4;
+            const dept = info?.dept || 'Campus';
             const year = sem >= 7 ? '4th Year' : sem >= 5 ? '3rd Year' : sem >= 3 ? '2nd Year' : '1st Year';
 
             participantMap.set(bIdStr, {
               id: bIdStr,
-              name: isYou ? 'You' : name,
-              initials: isYou ? 'BS' : initials,
+              name: isYou ? `${name} (You)` : name,
+              initials,
               yearBranch: `${year} · ${dept}`,
               highestBid: b.amount,
+              bidCount: 1,
               status: isLeader ? 'leading' : 'outbid',
               isYou,
             });
+          } else {
+            const item = participantMap.get(bIdStr)!;
+            item.bidCount += 1;
+            if (b.amount > item.highestBid) {
+              item.highestBid = b.amount;
+            }
           }
         }
 
-        // Realistic student participants mockup fallback if fewer than 6 participants
-        const sampleMockups = [
-          { name: 'Alex K.', initials: 'AK', yearBranch: '2nd Year · CSE', bidOffset: -50 },
-          { name: 'Rahul M.', initials: 'RK', yearBranch: '3rd Year · ECE', bidOffset: -100 },
-          { name: 'Maya P.', initials: 'MP', yearBranch: '2nd Year · IT', bidOffset: -150 },
-          { name: 'Sam J.', initials: 'SJ', yearBranch: '4th Year · MECH', bidOffset: -200 },
-          { name: 'Kavya S.', initials: 'KS', yearBranch: '1st Year · AI&DS', bidOffset: -250 },
-          { name: 'Vikram N.', initials: 'VN', yearBranch: '3rd Year · EEE', bidOffset: -300 },
-          { name: 'Divya R.', initials: 'DR', yearBranch: '2nd Year · CIVIL', bidOffset: -350 },
-        ];
-
         const participants = Array.from(participantMap.values());
+        participants.sort((a, b) => {
+          if (a.status === 'leading') return -1;
+          if (b.status === 'leading') return 1;
+          return b.highestBid - a.highestBid;
+        });
+
         const currentHigh = auction.currentPrice || auction.startPrice;
-
-        // If user is logged in, ensure "You" avatar is included at front
-        if (auth && !participants.some((p) => p.isYou)) {
-          participants.unshift({
-            id: auth.userId,
-            name: 'You',
-            initials: 'BS',
-            yearBranch: `${auth.sem >= 7 ? '4th Year' : auth.sem >= 5 ? '3rd Year' : '2nd Year'} · Campus`,
-            highestBid: currentHigh,
-            status: auction.leaderId && auction.leaderId.toString() === auth.userId ? 'leading' : 'outbid',
-            isYou: true,
-          });
-        }
-
-        let idx = 0;
-        while (participants.length < 6 && idx < sampleMockups.length) {
-          const s = sampleMockups[idx++];
-          const sBid = Math.max(auction.startPrice, currentHigh + s.bidOffset);
-          participants.push({
-            id: `sample-${idx}`,
-            name: s.name,
-            initials: s.initials,
-            yearBranch: s.yearBranch,
-            highestBid: sBid,
-            status: 'outbid',
-            isYou: false,
-          });
-        }
 
         return sendJson(res, 200, {
           ok: true,
           auction,
           seller: sellerInfo,
           participants,
-          uniqueCount: Math.max(participants.length, 8),
+          uniqueCount: participants.length,
+          totalBidsCount: bids.length,
           currentHighestBid: currentHigh,
         });
       } catch {

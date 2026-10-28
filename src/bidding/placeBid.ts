@@ -111,6 +111,7 @@ async function executeBidStep(
     bidderId,
     amount,
     serverTs: now,
+    createdAt: now,
     source: 'manual',
     ...(idempotencyKey ? { idempotencyKey } : {}),
   };

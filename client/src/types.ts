@@ -54,8 +54,24 @@ export interface LiveBidParticipant {
   initials: string;
   yearBranch: string;
   highestBid: number;
+  bidCount: number;
   status: 'leading' | 'outbid';
   isYou?: boolean;
+}
+
+export interface BidHistoryItem {
+  _id: string;
+  auctionId: string;
+  bidderId: string;
+  bidderName: string;
+  bidderInitials: string;
+  bidderYearBranch?: string;
+  amount: number;
+  serverTs: string;
+  createdAt: string;
+  source: 'manual' | 'auto';
+  isLeading: boolean;
+  isYou: boolean;
 }
 
 export interface Bid {

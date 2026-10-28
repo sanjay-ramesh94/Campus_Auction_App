@@ -1565,6 +1565,273 @@ body {
   color: #10b981;
 }
 
+.participant-avatar-wrapper.active-filter .participant-avatar-circle {
+  transform: scale(1.15);
+  box-shadow: 0 0 0 3px #10b981, 0 0 16px rgba(16, 185, 129, 0.6);
+}
+
+.participant-avatar-wrapper.active-filter .participant-avatar-label {
+  color: #10b981;
+  font-weight: 700;
+}
+
+.avatar-color-0 { background: #dbeafe; color: #1e40af; border: 2px solid #3b82f6; }
+.avatar-color-1 { background: #fed7aa; color: #9a3412; }
+.avatar-color-2 { background: #dcfce7; color: #166534; }
+.avatar-color-3 { background: #e9d5ff; color: #6b21a8; }
+.avatar-color-4 { background: #fef08a; color: #854d0e; }
+.avatar-color-5 { background: #fce7f3; color: #9d174d; }
+.avatar-color-6 { background: #ccfbf1; color: #115e59; }
+
+/* ============================================================
+   LIVE BID HISTORY SECTION
+   ============================================================ */
+.bid-history-card {
+  background: #ffffff;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+  margin-top: 1.5rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.bid-history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.bid-history-title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.bid-history-title {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+}
+
+.bid-history-count-badge {
+  background: #f1f5f9;
+  color: #475569;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.bid-filter-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  padding: 0.35rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.bid-filter-clear-btn {
+  background: transparent;
+  border: none;
+  color: #15803d;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0 0.2rem;
+  font-size: 0.78rem;
+}
+
+.bid-history-table-container {
+  overflow-x: auto;
+}
+
+.bid-history-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.bid-history-table th {
+  text-align: left;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  font-weight: 600;
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.bid-history-table td {
+  padding: 0.85rem 0.75rem;
+  font-size: 0.88rem;
+  color: #1e293b;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+
+.bid-history-row {
+  transition: background 0.15s ease;
+}
+
+.bid-history-row:hover {
+  background: #f8fafc;
+}
+
+.bid-history-row.leading-row {
+  background: #f0fdf4;
+}
+
+.bid-history-row.leading-row:hover {
+  background: #ecfdf5;
+}
+
+.bidder-info-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.bidder-avatar-sm {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.bidder-name-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.bidder-name-text {
+  font-weight: 600;
+  color: #0f172a;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.bidder-subtext {
+  font-size: 0.72rem;
+  color: #64748b;
+}
+
+.bid-amount-text {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #0f172a;
+}
+
+.bid-amount-text.leading {
+  color: #059669;
+}
+
+.bid-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.bid-badge.leading {
+  background: #dcfce7;
+  color: #166534;
+  border: 1px solid #86efac;
+}
+
+.bid-badge.outbid {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.bid-badge.auto {
+  background: #e0f2fe;
+  color: #0369a1;
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.bid-time-text {
+  color: #64748b;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.bid-history-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #f1f5f9;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.bid-pagination-info {
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.bid-pagination-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.bid-page-btn {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+  padding: 0.4rem 0.85rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.bid-page-btn:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.bid-page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.bid-history-empty {
+  text-align: center;
+  padding: 2.5rem 1.5rem;
+  color: #64748b;
+}
+
+.bid-history-empty-icon {
+  font-size: 2.2rem;
+  margin-bottom: 0.5rem;
+}
+
+
 /* ============================================================
    SCREEN 4: SELLER / CREATE LISTING PAGE
    ============================================================ */

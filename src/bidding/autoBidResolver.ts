@@ -88,6 +88,7 @@ export async function resolveAutoBids(
       bidderId: chosenAutoBid.userId,
       amount: min,
       serverTs: now,
+      createdAt: now,
       source: 'auto',
     };
 

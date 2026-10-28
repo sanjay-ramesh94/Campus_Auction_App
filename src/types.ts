@@ -24,6 +24,7 @@ export interface User {
   passwordHash?: string;
   role: UserRole;
   sem: number;
+  department?: string;
   notifPrefs?: UserNotificationPreferences;
   createdAt: Date;
   updatedAt?: Date;
@@ -77,6 +78,7 @@ export interface Bid {
   bidderId: ObjectId;
   amount: number;                // in integer rupees
   serverTs: Date;                // Server timestamp
+  createdAt?: Date;              // Server-generated timestamp
   source: BidSource;
   idempotencyKey?: string;
 }
