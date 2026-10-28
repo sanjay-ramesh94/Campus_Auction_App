@@ -46,18 +46,25 @@ const MIME_TYPES: Record<string, string> = {
 
 async function startDevServer() {
   let replSet: MongoMemoryReplSet | null = null;
-  let uri = process.env.MONGODB_URI;
+  const targetUri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/campus_auction';
+  let client: MongoClient;
+  let uri = targetUri;
 
-  if (!uri) {
-    console.log('⚡ No MONGODB_URI provided in .env; starting isolated in-memory replica set...');
+  try {
+    client = new MongoClient(targetUri, { serverSelectionTimeoutMS: 3000 });
+    await client.connect();
+    console.log(`✅ Connected to local MongoDB at: ${targetUri}`);
+    console.log(`📊 In MongoDB Compass: connect to "mongodb://localhost:27017" -> find database "campus_auction"`);
+  } catch (err) {
+    console.warn(`⚠️ Could not connect to ${targetUri}. Starting isolated in-memory replica set...`);
     replSet = await MongoMemoryReplSet.create({
       replSet: { count: 1, storageEngine: 'wiredTiger' },
     });
     uri = replSet.getUri();
+    client = new MongoClient(uri);
+    await client.connect();
+    console.log(`✅ Connected to in-memory replica set (${uri})`);
   }
-
-  const client = new MongoClient(uri);
-  await client.connect();
   const db: Db = client.db('campus_auction');
 
   console.log(`✅ Connected to MongoDB Replica Set (${uri})`);

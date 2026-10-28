@@ -17,7 +17,7 @@ export interface AutoBidResolutionResult {
  */
 export async function resolveAutoBids(
   db: Db,
-  session: ClientSession,
+  session: ClientSession | null,
   auction: Auction,
   now: Date,
   outboxEvents: OutboxEvent[]
@@ -28,7 +28,7 @@ export async function resolveAutoBids(
 
   // Fetch all auto-bids configured for this auction
   const configuredAutoBids = await collections.autoBids
-    .find({ auctionId: currentAuction._id }, { session })
+    .find({ auctionId: currentAuction._id }, session ? { session } : {})
     .sort({ createdAt: 1 })
     .toArray();
 
@@ -92,7 +92,7 @@ export async function resolveAutoBids(
     };
 
     // Insert auto-bid
-    await collections.bids.insertOne(autoBidDoc, { session });
+    await collections.bids.insertOne(autoBidDoc, session ? { session } : {});
 
     // Update auction document with version check
     const updateResult = await collections.auctions.updateOne(
@@ -108,7 +108,7 @@ export async function resolveAutoBids(
           bidCount: 1,
         },
       },
-      { session }
+      session ? { session } : {}
     );
 
     if (updateResult.matchedCount === 0) {
