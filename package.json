@@ -1,0 +1,25 @@
+{
+  "name": "campus-auction",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Campus auction platform engine with MongoDB transactional bidding and auto-bid resolver",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc && node dist/src/server.js",
+    "dev:client": "npm run dev --prefix client",
+    "build:client": "npm run build --prefix client && powershell -Command \"Copy-Item -Path client/dist/* -Destination public/ -Recurse -Force\"",
+    "demo": "tsc && node dist/src/demo.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "mongodb": "^6.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "mongodb-memory-server": "^10.1.3",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4"
+  }
+}
