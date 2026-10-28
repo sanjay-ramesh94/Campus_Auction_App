@@ -24,6 +24,7 @@ import {
   AuthTokenPayload,
 } from './auth.js';
 import { startAuctionSweeper } from './sweeper.js';
+import { presenceManager } from './presence.js';
 
 dotenv.config();
 
@@ -86,10 +87,15 @@ function sendJson(res: http.ServerResponse, status: number, data: any) {
   res.end(JSON.stringify(data, null, 2));
 }
 
-function getAuthUser(req: http.IncomingMessage): AuthTokenPayload | null {
+function getAuthUser(req: http.IncomingMessage, queryToken?: string): AuthTokenPayload | null {
   const header = req.headers['authorization'];
-  if (!header || !header.startsWith('Bearer ')) return null;
-  const token = header.slice(7).trim();
+  let token: string | null = null;
+  if (header && header.startsWith('Bearer ')) {
+    token = header.slice(7).trim();
+  } else if (queryToken) {
+    token = queryToken.trim();
+  }
+  if (!token) return null;
   return verifyToken(token);
 }
 
@@ -181,15 +187,77 @@ async function startDevServer() {
     console.log('🌱 Seeded 2 active campus listings.');
   }
 
-  // Active SSE subscribers
+  // Active SSE subscribers and connection metadata (for temporary live presence)
   const sseClients: Set<http.ServerResponse> = new Set();
+  const sseClientMeta = new Map<http.ServerResponse, { userId?: string; auctionId?: string }>();
+
+  // Broadcast presence updates across all connected SSE clients
+  presenceManager.setBroadcastFn((auctionId, payload) => {
+    const data = `data: ${JSON.stringify(payload)}\n\n`;
+    for (const res of sseClients) {
+      try {
+        res.write(data);
+      } catch {
+        const meta = sseClientMeta.get(res);
+        sseClients.delete(res);
+        sseClientMeta.delete(res);
+        if (meta?.userId && meta?.auctionId) {
+          presenceManager.removeConnection(meta.auctionId, meta.userId);
+        }
+      }
+    }
+  });
+
+  // Lookup current leader and unique accepted bidders for live presence styling
+  presenceManager.setBiddersLookupFn(async (auctionId) => {
+    try {
+      if (ObjectId.isValid(auctionId)) {
+        const aId = new ObjectId(auctionId);
+        const auction = await cols.auctions.findOne({ _id: aId });
+        const leaderId = auction?.leaderId ? auction.leaderId.toString() : null;
+        const distinctBidders = await cols.bids.distinct('bidderId', {
+          auctionId: aId,
+          status: 'accepted',
+        });
+        return {
+          leaderId,
+          bidderIds: new Set(distinctBidders.map((b) => b.toString())),
+        };
+      }
+      return { leaderId: null, bidderIds: new Set() };
+    } catch {
+      return { leaderId: null, bidderIds: new Set() };
+    }
+  });
+
+  // Heartbeat ping every 15s to keep connections alive and immediately drop dead ones
+  setInterval(() => {
+    for (const res of sseClients) {
+      try {
+        res.write(': heartbeat\n\n');
+      } catch {
+        const meta = sseClientMeta.get(res);
+        sseClients.delete(res);
+        sseClientMeta.delete(res);
+        if (meta?.userId && meta?.auctionId) {
+          presenceManager.removeConnection(meta.auctionId, meta.userId);
+        }
+      }
+    }
+  }, 15000);
+
   eventHub.subscribe((event) => {
     const data = `data: ${JSON.stringify(event)}\n\n`;
     for (const res of sseClients) {
       try {
         res.write(data);
       } catch {
+        const meta = sseClientMeta.get(res);
         sseClients.delete(res);
+        sseClientMeta.delete(res);
+        if (meta?.userId && meta?.auctionId) {
+          presenceManager.removeConnection(meta.auctionId, meta.userId);
+        }
       }
     }
   });
@@ -231,7 +299,7 @@ async function startDevServer() {
 
     // --- API Endpoints ---
 
-    // 0. SSE Stream
+    // 0. SSE Stream with Real-Time Temporary Presence
     if (url.pathname === '/api/events' && req.method === 'GET') {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -241,10 +309,52 @@ async function startDevServer() {
       res.write('data: {"type":"CONNECTED"}\n\n');
       sseClients.add(res);
 
+      const queryToken = url.searchParams.get('token');
+      const auctionId = url.searchParams.get('auctionId');
+      const auth = getAuthUser(req, queryToken || undefined);
+
+      if (auth && auctionId) {
+        // Authenticated roster student joining presence for this auction
+        sseClientMeta.set(res, { userId: auth.userId, auctionId });
+        presenceManager
+          .addConnection(auctionId, {
+            userId: auth.userId,
+            name: auth.name,
+          })
+          .then((payload) => {
+            try {
+              res.write(`data: ${JSON.stringify(payload)}\n\n`);
+            } catch {}
+          });
+      }
+
       req.on('close', () => {
+        const meta = sseClientMeta.get(res);
         sseClients.delete(res);
+        sseClientMeta.delete(res);
+        if (meta?.userId && meta?.auctionId) {
+          // Decrement connection count and schedule debounce timer
+          presenceManager.removeConnection(meta.auctionId, meta.userId);
+        }
       });
       return;
+    }
+
+    // 0.05 Page Visibility API - report active tab visibility
+    if (url.pathname === '/api/presence/visibility' && req.method === 'POST') {
+      const auth = getAuthUser(req);
+      if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
+
+      try {
+        const body = await readBody(req);
+        const { auctionId, visible } = body;
+        if (!auctionId) return sendJson(res, 400, { ok: false, error: 'auctionId is required' });
+
+        const payload = await presenceManager.setVisibility(auctionId, auth.userId, Boolean(visible));
+        return sendJson(res, 200, { ok: true, presence: payload });
+      } catch (err: any) {
+        return sendJson(res, 500, { ok: false, error: err.message });
+      }
     }
 
     // 0.1 Local Image Upload Endpoint (saves image locally to public/uploads/)
@@ -1238,6 +1348,7 @@ async function startDevServer() {
         });
 
         const currentHigh = auction.currentPrice || auction.startPrice;
+        const presence = await presenceManager.getPresence(auctionId);
 
         return sendJson(res, 200, {
           ok: true,
@@ -1247,10 +1358,19 @@ async function startDevServer() {
           uniqueCount: participants.length,
           totalBidsCount: bids.length,
           currentHighestBid: currentHigh,
+          presence,
         });
       } catch {
         return sendJson(res, 400, { ok: false, error: 'Invalid auction id' });
       }
+    }
+
+    // Get Live Presence for an Auction
+    const presenceRouteMatch = url.pathname.match(/^\/api\/auctions\/([a-fA-F0-9]{24})\/presence$/);
+    if (presenceRouteMatch && req.method === 'GET') {
+      const auctionId = presenceRouteMatch[1];
+      const presence = await presenceManager.getPresence(auctionId);
+      return sendJson(res, 200, { ok: true, presence });
     }
 
     // Place Bid (Enforces Buyer only rule)
@@ -1280,6 +1400,10 @@ async function startDevServer() {
           idempotencyKey: payload.idempotencyKey || req.headers['x-idempotency-key']?.toString(),
           bidderRole: auth.role,
         });
+
+        if (result.ok) {
+          await presenceManager.broadcastPresence(payload.auctionId);
+        }
 
         return sendJson(res, result.ok ? 200 : 400, result);
       } catch (err: any) {

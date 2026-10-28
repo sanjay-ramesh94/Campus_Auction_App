@@ -142,3 +142,21 @@ export interface ProposalCard {
   maxLimit: number;
   closesAt: string;
 }
+
+export interface PublicPresenceUser {
+  userId: string;
+  name: string;
+  initials: string;
+  isLeader: boolean;
+  isBidder: boolean;
+  isVisible: boolean;
+}
+
+export interface AuctionPresencePayload {
+  type?: 'PRESENCE_UPDATE';
+  auctionId: string;
+  totalPresent: number;
+  activeCount: number;
+  awayCount: number;
+  users: PublicPresenceUser[];
+}

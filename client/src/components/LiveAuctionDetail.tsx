@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { Auction, User, LiveBidParticipant, Question, BidHistoryItem } from '../types';
+import type { Auction, User, LiveBidParticipant, Question, BidHistoryItem, PublicPresenceUser } from '../types';
 
 interface LiveAuctionDetailProps {
   auctionId: string;
@@ -30,6 +30,12 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
   const [filterBidderId, setFilterBidderId] = useState<string | null>(null);
   const [totalBidsCount, setTotalBidsCount] = useState<number>(0);
 
+  // Temporary Live Room Presence (In-memory presence)
+  const [presenceUsers, setPresenceUsers] = useState<PublicPresenceUser[]>([]);
+  const [presentTotal, setPresentTotal] = useState<number>(0);
+  const [presentActive, setPresentActive] = useState<number>(0);
+  const [presentAway, setPresentAway] = useState<number>(0);
+
   const [activeImageIdx, setActiveImageIdx] = useState(0);
   const [isFavorite, setIsFavorite] = useState(false);
   const [bidAmount, setBidAmount] = useState<number>(0);
@@ -55,6 +61,49 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
     s: 4,
     formatted: '27m 4s',
   });
+
+  // Unified live participants with presence merged
+  const unifiedParticipants = React.useMemo(() => {
+    const list = participants.map((p, idx) => {
+      const pres = presenceUsers.find((u) => u.userId === p.id);
+      return {
+        id: p.id,
+        name: p.name,
+        initials: p.initials,
+        yearBranch: p.yearBranch,
+        highestBid: p.highestBid,
+        bidCount: p.bidCount,
+        status: p.status,
+        isYou: Boolean(p.isYou || (user && user.id === p.id)),
+        isBidder: true,
+        isOnline: Boolean(pres),
+        isVisible: pres ? pres.isVisible : false,
+        colorClass: p.isYou || (user && user.id === p.id) ? 'avatar-color-0' : `avatar-color-${(idx + 1) % 7}`,
+      };
+    });
+
+    // Also include any students currently viewing the room who haven't placed a bid yet
+    for (const pu of presenceUsers) {
+      if (!list.some((item) => item.id === pu.userId)) {
+        list.push({
+          id: pu.userId,
+          name: pu.name,
+          initials: pu.initials,
+          yearBranch: 'Spectator',
+          highestBid: 0,
+          bidCount: 0,
+          status: 'outbid' as const,
+          isYou: Boolean(user && user.id === pu.userId),
+          isBidder: false,
+          isOnline: true,
+          isVisible: pu.isVisible,
+          colorClass: user && user.id === pu.userId ? 'avatar-color-0' : `avatar-color-${(list.length + 1) % 7}`,
+        });
+      }
+    }
+
+    return list;
+  }, [participants, presenceUsers, user]);
 
   // Human-readable local timestamp formatter with date when appropriate
   const formatBidTimestamp = (isoString: string): string => {
@@ -108,6 +157,12 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
         if (typeof data.uniqueCount === 'number') setUniqueCount(data.uniqueCount);
         if (typeof data.totalBidsCount === 'number') setTotalBidsCount(data.totalBidsCount);
         if (data.currentHighestBid) setCurrentHighestBid(data.currentHighestBid);
+        if (data.presence) {
+          setPresenceUsers(data.presence.users || []);
+          setPresentTotal(data.presence.totalPresent || 0);
+          setPresentActive(data.presence.activeCount || 0);
+          setPresentAway(data.presence.awayCount || 0);
+        }
 
         const cur = data.auction.currentPrice || data.auction.startPrice;
         const nextMin = cur + data.auction.minIncrement;
@@ -162,9 +217,10 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
     return () => clearInterval(interval);
   }, [auctionId, token, bidsPage, filterBidderId]);
 
-  // Real-time instant SSE listener for questions, answers, and bids with reconnect recovery
+  // Real-time instant SSE listener with Live Presence, questions, answers, and bids with reconnect recovery
   useEffect(() => {
-    const es = new EventSource('/api/events');
+    const sseUrl = `/api/events?auctionId=${encodeURIComponent(auctionId)}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+    const es = new EventSource(sseUrl);
     es.onopen = () => {
       // On reconnect or initial connection, refetch authoritative state
       fetchDetails();
@@ -174,7 +230,12 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
     es.onmessage = (e) => {
       try {
         const event = JSON.parse(e.data);
-        if (
+        if (event.type === 'PRESENCE_UPDATE' && event.auctionId === auctionId) {
+          setPresenceUsers(event.users || []);
+          setPresentTotal(event.totalPresent || 0);
+          setPresentActive(event.activeCount || 0);
+          setPresentAway(event.awayCount || 0);
+        } else if (
           event.auctionId === auctionId ||
           event.type === 'BID_PLACED' ||
           event.type === 'OUTBID' ||
@@ -193,7 +254,32 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
       } catch {}
     };
     return () => es.close();
-  }, [auctionId, bidsPage, filterBidderId]);
+  }, [auctionId, token, bidsPage, filterBidderId]);
+
+  // Page Visibility API - background tab tracking (reports active tab vs away)
+  useEffect(() => {
+    if (!token || !auctionId) return;
+
+    const reportVisibility = () => {
+      const isVisible = document.visibilityState === 'visible';
+      fetch('/api/presence/visibility', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          auctionId,
+          visible: isVisible,
+        }),
+      }).catch(() => {});
+    };
+
+    document.addEventListener('visibilitychange', reportVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', reportVisibility);
+    };
+  }, [auctionId, token]);
 
   // Click outside listener for participant popovers
   useEffect(() => {
@@ -541,6 +627,7 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
 
           {/* ============================================================
               IMAGE 2 FEATURE: LIVE BID PARTICIPANTS COMPONENT
+              (With Live Room Presence Integrated Directly Into Participants)
               ============================================================ */}
           <div className="live-participants-card">
             <div className="live-participants-header">
@@ -550,24 +637,26 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
                   {auction.title} · {auction.category}
                 </div>
               </div>
-              <div className="live-badge-pill">
+              <div
+                className="live-badge-pill"
+                title={`${presentTotal} student${presentTotal === 1 ? '' : 's'} viewing this page now (${presentActive} active${
+                  presentAway > 0 ? `, ${presentAway} away` : ''
+                })`}
+              >
                 <span className="live-dot-pulse" />
-                <span>LIVE</span>
+                <span>LIVE · {presentTotal > 0 ? `${presentTotal} IN ROOM` : 'LIVE'}</span>
               </div>
             </div>
 
             {/* Circular Avatars Row */}
             <div className="participants-avatars-row">
-              {participants.length === 0 ? (
+              {unifiedParticipants.length === 0 ? (
                 <div style={{ color: '#94a3b8', fontSize: '0.85rem', padding: '0.75rem 0' }}>
                   No bids placed yet. Place the opening bid to be the first participant!
                 </div>
               ) : (
                 <>
-                  {participants.slice(0, 6).map((p, idx) => {
-                    const avatarColorClass = p.isYou
-                      ? 'avatar-color-0'
-                      : `avatar-color-${(idx + 1) % 7}`;
+                  {unifiedParticipants.slice(0, 8).map((p) => {
                     const isSelected = filterBidderId === p.id;
                     const isPopoverOpen = activePopoverId === p.id;
 
@@ -575,12 +664,43 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
                       <div
                         key={p.id}
                         className={`participant-avatar-wrapper ${isSelected ? 'active-filter' : ''}`}
-                        onClick={() => handleParticipantClick(p.id)}
-                        title={`Click to filter bids by ${p.name}`}
+                        onClick={() => {
+                          if (p.isBidder) {
+                            handleParticipantClick(p.id);
+                          } else {
+                            setActivePopoverId(isPopoverOpen ? null : p.id);
+                          }
+                        }}
+                        title={`${p.name} ${p.isYou ? '(You)' : ''}${
+                          p.isBidder ? ' · Click to filter bids' : ' · Spectating'
+                        }`}
                       >
-                        <div className={`participant-avatar-circle ${avatarColorClass}`}>
+                        <div
+                          className={`participant-avatar-circle ${p.colorClass} ${
+                            p.status === 'leading' ? 'is-leader-ring' : p.isOnline ? 'is-online' : ''
+                          } ${p.isOnline && !p.isVisible ? 'is-away' : ''} ${
+                            !p.isBidder ? 'is-spectator' : ''
+                          }`}
+                        >
                           {p.initials}
+
+                          {/* Real-time Presence Indicator Dot on Avatar */}
+                          {p.isOnline && (
+                            <span
+                              className={`participant-presence-dot ${
+                                !p.isVisible ? 'away' : p.status === 'leading' ? 'leader' : ''
+                              }`}
+                              title={
+                                p.status === 'leading'
+                                  ? 'Leading Bidder (In Room)'
+                                  : p.isVisible
+                                  ? 'Active in room right now'
+                                  : 'Away in background tab'
+                              }
+                            />
+                          )}
                         </div>
+
                         <div className="participant-avatar-label">
                           {p.isYou ? 'You' : p.name.split(' ')[0]}
                         </div>
@@ -593,35 +713,72 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
                               {p.name} {p.isYou ? '(You)' : ''}
                             </div>
                             <div className="popover-branch">{p.yearBranch}</div>
-                            <div className="popover-bid-row">
-                              <span style={{ color: '#cbd5e1' }}>Highest: ₹{p.highestBid.toLocaleString()}</span>
-                              <span className={`popover-status-badge ${p.status}`}>
-                                {p.status === 'leading' ? 'Leading' : 'Outbid'}
-                              </span>
+
+                            {p.isBidder ? (
+                              <div className="popover-bid-row">
+                                <span style={{ color: '#cbd5e1' }}>
+                                  Highest: ₹{p.highestBid.toLocaleString()}
+                                </span>
+                                <span className={`popover-status-badge ${p.status}`}>
+                                  {p.status === 'leading' ? 'Leading' : 'Outbid'}
+                                </span>
+                              </div>
+                            ) : (
+                              <div style={{ margin: '0.35rem 0', fontSize: '0.78rem', color: '#38bdf8' }}>
+                                👀 Spectating in room
+                              </div>
+                            )}
+
+                            {/* Room Presence Status */}
+                            <div
+                              style={{
+                                marginTop: '0.45rem',
+                                paddingTop: '0.35rem',
+                                borderTop: '1px solid rgba(255,255,255,0.08)',
+                                fontSize: '0.72rem',
+                                color: p.isOnline ? (p.isVisible ? '#34d399' : '#f59e0b') : '#94a3b8',
+                                textAlign: 'center',
+                              }}
+                            >
+                              {p.isOnline
+                                ? p.isVisible
+                                  ? '🟢 In the room right now (Active)'
+                                  : '🌙 In the room (Away in background)'
+                                : '⚪ Offline (Left the room)'}
                             </div>
-                            <div style={{ marginTop: '0.4rem', fontSize: '0.72rem', color: '#94a3b8', textAlign: 'center' }}>
-                              {p.bidCount || 1} bids placed · Click to {isSelected ? 'clear filter' : 'filter'}
-                            </div>
+
+                            {p.isBidder && (
+                              <div
+                                style={{
+                                  marginTop: '0.3rem',
+                                  fontSize: '0.7rem',
+                                  color: '#94a3b8',
+                                  textAlign: 'center',
+                                }}
+                              >
+                                {p.bidCount || 1} bids placed · Click to {isSelected ? 'clear filter' : 'filter'}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
                     );
                   })}
 
-                  {participants.length > 6 && (
+                  {unifiedParticipants.length > 8 && (
                     <div
                       className="participant-avatar-wrapper"
                       onClick={() =>
                         onShowToast(
                           'info',
-                          'Active Bidders',
-                          `${uniqueCount} registered campus students have placed bids on this listing.`
+                          'Active Participants',
+                          `${uniqueCount} registered students have placed bids · ${presentTotal} viewing live.`
                         )
                       }
-                      title={`${participants.length - 6} more bidders`}
+                      title={`${unifiedParticipants.length - 8} more students`}
                     >
                       <div className="participant-avatar-circle avatar-more">
-                        +{participants.length - 6}
+                        +{unifiedParticipants.length - 8}
                       </div>
                       <div className="participant-avatar-label">More</div>
                     </div>
