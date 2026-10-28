@@ -1,5 +1,16 @@
 import { ObjectId } from 'mongodb';
 
+export type UserRole = 'seller' | 'buyer';
+
+export interface AuthorizedStudent {
+  _id: ObjectId;
+  email: string;
+  name?: string;
+  sem: number; // 1 to 9 (7, 8, 9 = Seller; others = Buyer)
+  department?: string;
+  createdAt: Date;
+}
+
 export type UserNotificationPreferences = {
   email?: boolean;
   push?: boolean;
@@ -10,12 +21,22 @@ export interface User {
   _id: ObjectId;
   name: string;
   email: string;
-  passwordHash: string;
+  passwordHash?: string;
+  role: UserRole;
+  sem: number;
   notifPrefs?: UserNotificationPreferences;
   createdAt: Date;
+  updatedAt?: Date;
 }
 
-export type AuctionStatus = 'active' | 'closed' | 'cancelled';
+export type AuctionStatus =
+  | 'active'
+  | 'pending_approval'
+  | 'reserved'
+  | 'sold'
+  | 'unsold'
+  | 'closed'
+  | 'cancelled';
 
 export interface Auction {
   _id: ObjectId;
@@ -35,7 +56,17 @@ export interface Auction {
   version: number;               // Document version incremented on each state change
   status: AuctionStatus;
   outcomeReason?: string;
+
+  // Closing & Handover fields
+  winningBidId?: ObjectId;
+  winnerId?: ObjectId;
+  approvalDecision?: 'approved' | 'rejected';
+  approvalReason?: string;
+  handoverStatus?: 'pending' | 'confirmed' | 'failed';
+  handoverNotes?: string;
+
   createdAt: Date;
+  updatedAt?: Date;
 }
 
 export type BidSource = 'manual' | 'auto';
@@ -64,8 +95,10 @@ export interface Question {
   _id: ObjectId;
   auctionId: ObjectId;
   askerId: ObjectId;
+  askerName?: string;
   text: string;
   answer?: string;
+  answeredAt?: Date;
   status: QuestionStatus;
   pinned: boolean;
   createdAt: Date;
@@ -86,6 +119,8 @@ export interface Notification {
   _id: ObjectId;
   userId: ObjectId;
   type: string;
+  title: string;
+  message: string;
   payload: Record<string, unknown>;
   readAt?: Date;
   createdAt: Date;
@@ -104,6 +139,7 @@ export type BidRejectReason =
   | 'NOT_ACTIVE'
   | 'CLOSED'
   | 'OWN_ITEM'
+  | 'SELLER_CANNOT_BID'
   | 'MAX_REACHED'
   | 'TOO_LOW_OR_STALE';
 
@@ -112,6 +148,7 @@ export interface PlaceBidParams {
   bidderId: ObjectId;
   amount: number;
   idempotencyKey?: string;
+  bidderRole?: UserRole;
 }
 
 export type BidSuccessResult = {
@@ -132,7 +169,19 @@ export type BidRejectResult = {
 export type BidResult = BidSuccessResult | BidRejectResult;
 
 export interface OutboxEvent {
-  type: 'BID_PLACED' | 'OUTBID' | 'DEADLINE_EXTENDED' | 'AUCTION_MAX_REACHED' | 'AUTO_BID_TRIGGERED';
+  type:
+    | 'BID_PLACED'
+    | 'OUTBID'
+    | 'DEADLINE_EXTENDED'
+    | 'AUCTION_MAX_REACHED'
+    | 'AUTO_BID_TRIGGERED'
+    | 'QUESTION_ASKED'
+    | 'QUESTION_ANSWERED'
+    | 'AUCTION_ENDED'
+    | 'AUCTION_APPROVED'
+    | 'AUCTION_REJECTED'
+    | 'HANDOVER_CONFIRMED'
+    | 'WATCH_MATCH';
   targetUserId?: ObjectId;
   auctionId: ObjectId;
   payload: Record<string, unknown>;

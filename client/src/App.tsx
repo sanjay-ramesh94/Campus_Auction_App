@@ -1,26 +1,44 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Auction, UserPersona, ToastMessage } from './types';
+import type { User, ToastMessage, NotificationItem, Auction } from './types';
+import { AuthModal } from './components/AuthModal';
 import { Header } from './components/Header';
-import { AuctionCard } from './components/AuctionCard';
-import { BiddingConsole } from './components/BiddingConsole';
-import { CreateAuctionModal } from './components/CreateAuctionModal';
+import { SellerDashboard } from './components/SellerDashboard';
+import { BuyerHome } from './components/BuyerHome';
+import { MyBidsTab } from './components/MyBidsTab';
+import { WatchlistTab } from './components/WatchlistTab';
+import { AiAssistantTab } from './components/AiAssistantTab';
+import { CreateListingModal } from './components/CreateListingModal';
+import { OnboardingModal } from './components/OnboardingModal';
 import { Toast } from './components/Toast';
 
-const PERSONAS: UserPersona[] = [
-  { id: '6ae17eacf4fba89e771f4f14', name: 'Bob', role: 'Manual', avatar: '👤' },
-  { id: '6ae17eacf4fba89e771f4f15', name: 'Charlie', role: 'Manual', avatar: '👤' },
-  { id: '6ae17eacf4fba89e771f4f16', name: 'David', role: 'Sniper', avatar: '👤' },
-  { id: '6ae17eacf4fba89e771f4f13', name: 'Alice', role: 'Auto-Bidder', avatar: '🤖' },
-];
-
 export function App() {
-  const [personas] = useState<UserPersona[]>(PERSONAS);
-  const [selectedPersona, setSelectedPersona] = useState<UserPersona>(PERSONAS[0]);
-  const [auctions, setAuctions] = useState<Auction[]>([]);
-  const [selectedAuctionId, setSelectedAuctionId] = useState<string | null>(null);
+  const [user, setUser] = useState<User | null>(() => {
+    const saved = localStorage.getItem('campus_auction_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  const [token, setToken] = useState<string | null>(() => {
+    return localStorage.getItem('campus_auction_token');
+  });
+
+  const [activeTab, setActiveTab] = useState<string>('browse');
   const [connected, setConnected] = useState<boolean>(false);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [unreadCount, setUnreadCount] = useState<number>(0);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isCreateOpen, setIsCreateOpen] = useState<boolean>(false);
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
+
+  // Set default tab on login based on role
+  useEffect(() => {
+    if (user) {
+      if (user.role === 'seller') {
+        setActiveTab('dashboard');
+      } else {
+        setActiveTab('browse');
+      }
+    }
+  }, [user?.role]);
 
   const showToast = useCallback(
     (type: 'info' | 'success' | 'warning' | 'error', title: string, message: string) => {
@@ -33,152 +51,208 @@ export function App() {
     []
   );
 
-  const fetchAuctions = useCallback(async () => {
+  // Fetch notifications
+  const fetchNotifications = useCallback(async () => {
+    if (!token) return;
     try {
-      const res = await fetch('/api/auctions');
+      const res = await fetch('/api/notifications', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const data = await res.json();
-      if (data.ok && Array.isArray(data.auctions)) {
-        setAuctions(data.auctions);
-        setSelectedAuctionId((currentId) => {
-          if (!currentId && data.auctions.length > 0) {
-            return data.auctions[0]._id;
-          }
-          return currentId;
-        });
+      if (data.ok) {
+        setNotifications(data.notifications || []);
+        setUnreadCount(data.unreadCount || 0);
       }
     } catch (err) {
-      console.error('Failed to fetch auctions:', err);
+      console.error(err);
     }
-  }, []);
+  }, [token]);
 
-  // Initial load
   useEffect(() => {
-    fetchAuctions();
-  }, [fetchAuctions]);
+    fetchNotifications();
+    const timer = setInterval(fetchNotifications, 6000);
+    return () => clearInterval(timer);
+  }, [fetchNotifications]);
 
-  // Connect to live SSE Stream
+  // Connect to SSE live feed
   useEffect(() => {
     const eventSource = new EventSource('/api/events');
 
-    eventSource.onopen = () => {
-      setConnected(true);
-    };
+    eventSource.onopen = () => setConnected(true);
+    eventSource.onerror = () => setConnected(false);
 
     eventSource.onmessage = (e) => {
       try {
         const event = JSON.parse(e.data);
         if (event.type === 'CONNECTED') return;
 
-        // Auto-refresh auctions on any transactional state change
-        fetchAuctions();
+        fetchNotifications();
 
-        // Dispatch relevant toast notifications based on target user
+        // Broadcast notifications
         if (event.type === 'DEADLINE_EXTENDED') {
           showToast('warning', '🛡️ Anti-Sniping Protection', 'A bid landed in the final 30s! Deadline extended by +60s.');
         } else if (event.type === 'OUTBID') {
-          if (event.targetUserId === selectedPersona.id) {
-            showToast('error', '⚠️ You were Outbid!', `Someone placed a higher bid (₹${event.payload?.newPrice}).`);
+          if (user && event.targetUserId === user.id) {
+            showToast('error', '⚠️ You Were Outbid!', `New high bid of ₹${event.payload?.newPrice}.`);
           }
-        } else if (event.type === 'AUTO_BID_TRIGGERED') {
-          if (event.targetUserId === selectedPersona.id) {
-            showToast('info', '🤖 Auto-Bid Activated', `Your proxy auto-bid placed ₹${event.payload?.amount} for you.`);
+        } else if (event.type === 'AUCTION_ENDED') {
+          if (user && event.targetUserId === user.id) {
+            showToast('info', 'Auction Ended', `Status: ${event.payload?.status}`);
           }
         }
       } catch (err) {
-        console.error('SSE message parsing error:', err);
+        console.error(err);
       }
     };
 
-    eventSource.onerror = () => {
-      setConnected(false);
-    };
+    return () => eventSource.close();
+  }, [fetchNotifications, showToast, user]);
 
-    return () => {
-      eventSource.close();
-    };
-  }, [fetchAuctions, selectedPersona.id, showToast]);
+  const handleLoginSuccess = (loggedInUser: User, authToken: string) => {
+    setUser(loggedInUser);
+    setToken(authToken);
+    localStorage.setItem('campus_auction_user', JSON.stringify(loggedInUser));
+    localStorage.setItem('campus_auction_token', authToken);
 
-  const selectedAuction = auctions.find((a) => a._id === selectedAuctionId) || null;
+    // If first time logged in on this browser, show onboarding
+    const seenOnboard = localStorage.getItem(`onboard_${loggedInUser.id}`);
+    if (!seenOnboard) {
+      setShowOnboarding(true);
+    }
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    setToken(null);
+    localStorage.removeItem('campus_auction_user');
+    localStorage.removeItem('campus_auction_token');
+    showToast('info', 'Logged Out', 'You have been signed out successfully.');
+  };
+
+  const handleMarkNotificationRead = async (id: string) => {
+    if (!token) return;
+    try {
+      await fetch(`/api/notifications/${id}/read`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      fetchNotifications();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    if (!token) return;
+    try {
+      await fetch('/api/notifications/read-all', {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      fetchNotifications();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Role Guard: Prevents Buyer from opening Seller dashboard and vice-versa
+  const handleSelectTab = (tab: string) => {
+    if (!user) return;
+    if (user.role === 'buyer' && (tab === 'dashboard' || tab === 'create')) {
+      showToast('error', 'Access Denied', 'Only Sellers (Semesters 7, 8, 9) have access to Seller Dashboard.');
+      return;
+    }
+    if (user.role === 'seller' && ['my_bids', 'watchlist', 'ai_assistant'].includes(tab)) {
+      showToast('error', 'Sellers Cannot Buy', 'Sellers cannot participate in bidding or set buyer alerts.');
+      return;
+    }
+    setActiveTab(tab);
+  };
+
+  if (!user || !token) {
+    return (
+      <div className="app-container">
+        <AuthModal onSuccess={handleLoginSuccess} showToast={showToast} />
+        <Toast toasts={toasts} onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))} />
+      </div>
+    );
+  }
 
   return (
     <div className="app-container">
-      {/* Header */}
+      {/* Role-Aware Header */}
       <Header
+        user={user}
+        activeTab={activeTab}
+        onSelectTab={handleSelectTab}
         connected={connected}
-        personas={personas}
-        selectedPersona={selectedPersona}
-        onSelectPersona={setSelectedPersona}
+        notifications={notifications}
+        unreadCount={unreadCount}
+        onMarkNotificationRead={handleMarkNotificationRead}
+        onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
         onOpenCreateModal={() => setIsCreateOpen(true)}
+        onLogout={handleLogout}
       />
 
-      {/* Architecture Highlights Bar */}
-      <div className="info-banner">
-        <div className="banner-card">
-          <div className="banner-left">
-            <span className="badge-tech">MongoDB Transactions</span>
-            <span>
-              Real-time multi-document ACID consistency. Zero float drift (Integer ₹). Anti-sniping +60s extensions. In-transaction proxy auto-bid resolution.
-            </span>
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.8rem', color: '#10b981', fontWeight: 600 }}>
-              {auctions.length} Active Listing{auctions.length === 1 ? '' : 's'}
-            </span>
-            <button className="btn btn-secondary" style={{ padding: '0.4rem 0.75rem', fontSize: '0.8rem' }} onClick={fetchAuctions}>
-              🔄 Refresh
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Grid */}
-      <main className="main-content">
-        {/* Left: Catalog */}
-        <section className="catalog-section">
-          <div className="catalog-header">
-            <h2 className="section-heading">Live Campus Listings</h2>
-          </div>
-
-          <div className="catalog-cards">
-            {auctions.length === 0 ? (
-              <div className="auction-card" style={{ textAlign: 'center', color: '#94a3b8' }}>
-                No active listings found. Click "+ List Item" to add one!
-              </div>
-            ) : (
-              auctions.map((item) => (
-                <AuctionCard
-                  key={item._id}
-                  auction={item}
-                  isSelected={item._id === selectedAuctionId}
-                  currentPersona={selectedPersona}
-                  onSelect={(a) => setSelectedAuctionId(a._id)}
-                />
-              ))
-            )}
-          </div>
-        </section>
-
-        {/* Right: Bidding Console */}
-        <section className="workspace-section">
-          <BiddingConsole
-            auction={selectedAuction}
-            currentPersona={selectedPersona}
-            onBidPlaced={fetchAuctions}
+      {/* Main View Router based on Role & Active Tab */}
+      <main className="main-viewport">
+        {user.role === 'seller' ? (
+          /* SELLER FLOW (Sem 7, 8, 9) */
+          <SellerDashboard
+            token={token}
+            onOpenCreateModal={() => setIsCreateOpen(true)}
             showToast={showToast}
           />
-        </section>
+        ) : (
+          /* BUYER FLOW (Other Sems) */
+          <>
+            {activeTab === 'browse' && (
+              <BuyerHome user={user} token={token} showToast={showToast} />
+            )}
+            {activeTab === 'my_bids' && (
+              <MyBidsTab
+                token={token}
+                onSelectAuction={(_a: Auction) => setActiveTab('browse')}
+              />
+            )}
+            {activeTab === 'watchlist' && (
+              <WatchlistTab token={token} showToast={showToast} />
+            )}
+            {activeTab === 'ai_assistant' && (
+              <AiAssistantTab token={token} showToast={showToast} />
+            )}
+          </>
+        )}
       </main>
 
-      {/* Create Listing Modal */}
-      <CreateAuctionModal
-        isOpen={isCreateOpen}
-        onClose={() => setIsCreateOpen(false)}
-        currentPersona={selectedPersona}
-        onCreated={fetchAuctions}
-        showToast={showToast}
-      />
+      {/* Seller Create Listing Modal */}
+      {user.role === 'seller' && (
+        <CreateListingModal
+          isOpen={isCreateOpen}
+          onClose={() => setIsCreateOpen(false)}
+          token={token}
+          onCreated={() => {
+            setActiveTab('dashboard');
+          }}
+          showToast={showToast}
+        />
+      )}
 
-      {/* Toast Notifications */}
+      {/* Optional One-Time Onboarding Prompt */}
+      {showOnboarding && (
+        <OnboardingModal
+          user={user}
+          token={token}
+          onComplete={(updatedName) => {
+            if (updatedName) setUser({ ...user, name: updatedName });
+            localStorage.setItem(`onboard_${user.id}`, 'true');
+            setShowOnboarding(false);
+          }}
+          showToast={showToast}
+        />
+      )}
+
+      {/* Global Toast Container */}
       <Toast toasts={toasts} onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))} />
     </div>
   );

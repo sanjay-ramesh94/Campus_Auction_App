@@ -83,3 +83,18 @@ Vitest tests utilize `MongoMemoryReplSet` from `mongodb-memory-server` instead o
 ### Rationale
 - MongoDB transactions strictly require a replica set topology.
 - `MongoMemoryReplSet` provides an isolated, zero-dependency in-memory replica set for testing transactional concurrency, conflict retries, and atomic rollbacks.
+
+---
+
+## 8. Role Authorization & Strict Role Separation (Sellers Cannot Buy)
+
+### Decision
+The platform enforces strict server-side role derivation at each login based on the campus roster (`authorizedStudents` collection):
+- Semesters **7, 8, and 9** are assigned the **`seller`** role.
+- All other semesters are assigned the **`buyer`** role.
+- Unregistered emails are blocked from account creation.
+- **Sellers Cannot Bid:** A student with the `seller` role is strictly prohibited from placing bids or setting auto-bids on **ANY** listing (own or other sellers'). The backend enforces this rule with the `SELLER_CANNOT_BID` rejection code, and the UI completely hides bidding controls for sellers.
+
+### Rationale & Future Trade-offs
+- Prevents conflicting campus seller incentives, shill bidding, and bidding collusion between graduating batches.
+- If a senior seller wishes to buy an item, campus policy currently does not allow cross-role participation on the same account. A dual-account or secondary buyer persona may be evaluated in future phases, but the single-role invariant remains authoritative for this release.

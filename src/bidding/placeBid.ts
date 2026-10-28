@@ -73,6 +73,9 @@ async function executeBidStep(
   if (now.getTime() >= a.closesAt.getTime()) {
     return { ok: false, reason: 'CLOSED' };
   }
+  if (params.bidderRole === 'seller') {
+    return { ok: false, reason: 'SELLER_CANNOT_BID' };
+  }
   if (a.sellerId.equals(bidderId)) {
     return { ok: false, reason: 'OWN_ITEM' };
   }

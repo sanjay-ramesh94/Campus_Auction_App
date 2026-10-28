@@ -1,44 +1,69 @@
 import React, { useState } from 'react';
-import type { UserPersona } from '../types';
 
-interface CreateAuctionModalProps {
+interface CreateListingModalProps {
   isOpen: boolean;
   onClose: () => void;
-  currentPersona: UserPersona;
+  token: string;
   onCreated: () => void;
   showToast: (type: 'info' | 'success' | 'warning' | 'error', title: string, message: string) => void;
 }
 
-export const CreateAuctionModal: React.FC<CreateAuctionModalProps> = ({
+export const CreateListingModal: React.FC<CreateListingModalProps> = ({
   isOpen,
   onClose,
-  currentPersona,
+  token,
   onCreated,
   showToast,
 }) => {
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('Electronics');
   const [condition, setCondition] = useState('Like New');
-  const [startPrice, setStartPrice] = useState(500);
-  const [minIncrement, setMinIncrement] = useState(50);
-  const [maxPrice, setMaxPrice] = useState(2500);
-  const [durationMinutes, setDurationMinutes] = useState(15);
+  const [startPrice, setStartPrice] = useState<number>(500);
+  const [minIncrement, setMinIncrement] = useState<number>(50);
+  const [maxPrice, setMaxPrice] = useState<number>(2500);
+  const [durationMinutes, setDurationMinutes] = useState<number>(15);
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title || !startPrice) return;
-    setLoading(true);
+    setValidationError(null);
 
+    // Inline validations as required
+    if (!title.trim()) {
+      setValidationError('Title is required');
+      return;
+    }
+    if (startPrice <= 0) {
+      setValidationError('Starting price must be greater than ₹0');
+      return;
+    }
+    if (startPrice > maxPrice) {
+      setValidationError('Starting price cannot be greater than maximum buyout price (start ≤ max)');
+      return;
+    }
+    if (minIncrement <= 0) {
+      setValidationError('Minimum increment must be greater than ₹0');
+      return;
+    }
+    if (durationMinutes <= 0) {
+      setValidationError('Closing time must be in the future (duration > 0)');
+      return;
+    }
+
+    setLoading(true);
     try {
-      const res = await fetch('/api/auctions', {
+      const res = await fetch('/api/seller/auctions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
-          title,
+          title: title.trim(),
           category,
           condition,
           startPrice,
@@ -46,20 +71,19 @@ export const CreateAuctionModal: React.FC<CreateAuctionModalProps> = ({
           maxPrice,
           durationMinutes,
           description,
-          sellerId: currentPersona.id,
         }),
       });
 
       const data = await res.json();
       if (data.ok) {
-        showToast('success', 'Auction Created!', `"${title}" is now live for bidding!`);
+        showToast('success', 'Listing Created!', `"${title}" is now active in the catalog.`);
         onCreated();
         onClose();
       } else {
-        showToast('error', 'Creation Failed', data.error || 'Failed to list item');
+        setValidationError(data.error || 'Failed to create listing');
       }
-    } catch (err: unknown) {
-      showToast('error', 'Error', String(err));
+    } catch (err: any) {
+      setValidationError(err.message || 'Network error');
     } finally {
       setLoading(false);
     }
@@ -69,9 +93,15 @@ export const CreateAuctionModal: React.FC<CreateAuctionModalProps> = ({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box" onClick={(e) => e.stopPropagation()}>
         <div className="modal-top">
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.35rem' }}>List Campus Item</h2>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.35rem' }}>Create Campus Listing</h2>
           <button className="btn-close" type="button" onClick={onClose}>&times;</button>
         </div>
+
+        {validationError && (
+          <div className="auth-error-banner" style={{ margin: '0' }}>
+            <span>⚠️</span> {validationError}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="form-grid">
           <div className="form-group">
@@ -79,7 +109,7 @@ export const CreateAuctionModal: React.FC<CreateAuctionModalProps> = ({
             <input
               type="text"
               className="form-input"
-              placeholder="e.g. iPad 9th Gen 64GB + Apple Pencil"
+              placeholder="e.g. TI-84 Plus Graphing Calculator"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               required
@@ -114,8 +144,7 @@ export const CreateAuctionModal: React.FC<CreateAuctionModalProps> = ({
               <input
                 type="number"
                 className="form-input"
-                min="10"
-                step="10"
+                min="1"
                 value={startPrice}
                 onChange={(e) => setStartPrice(parseInt(e.target.value, 10))}
                 required
@@ -123,12 +152,11 @@ export const CreateAuctionModal: React.FC<CreateAuctionModalProps> = ({
             </div>
 
             <div className="form-group">
-              <label>Increment (₹)</label>
+              <label>Increment (₹) *</label>
               <input
                 type="number"
                 className="form-input"
-                min="10"
-                step="10"
+                min="1"
                 value={minIncrement}
                 onChange={(e) => setMinIncrement(parseInt(e.target.value, 10))}
                 required
@@ -136,12 +164,11 @@ export const CreateAuctionModal: React.FC<CreateAuctionModalProps> = ({
             </div>
 
             <div className="form-group">
-              <label>Max Buyout (₹)</label>
+              <label>Max Buyout (₹) *</label>
               <input
                 type="number"
                 className="form-input"
-                min="50"
-                step="50"
+                min="1"
                 value={maxPrice}
                 onChange={(e) => setMaxPrice(parseInt(e.target.value, 10))}
                 required
@@ -150,7 +177,7 @@ export const CreateAuctionModal: React.FC<CreateAuctionModalProps> = ({
           </div>
 
           <div className="form-group">
-            <label>Duration (Minutes)</label>
+            <label>Closing In (Minutes) *</label>
             <input
               type="number"
               className="form-input"
@@ -161,16 +188,16 @@ export const CreateAuctionModal: React.FC<CreateAuctionModalProps> = ({
               required
             />
             <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-              💡 Set to 1-2 minutes to test real-time anti-sniping (+60s extensions)!
+              💡 Set to 1-2 minutes to test anti-sniping (+60s auto extensions) and closing approval!
             </span>
           </div>
 
           <div className="form-group">
-            <label>Description</label>
+            <label>Description & Notes</label>
             <textarea
               className="form-textarea"
               rows={2}
-              placeholder="Pick up location on campus, included accessories, etc."
+              placeholder="Meeting spot on campus, accessories included, condition notes..."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
             />
@@ -181,7 +208,7 @@ export const CreateAuctionModal: React.FC<CreateAuctionModalProps> = ({
               Cancel
             </button>
             <button className="btn btn-primary" type="submit" disabled={loading}>
-              {loading ? 'Creating...' : 'List Auction'}
+              {loading ? 'Publishing...' : 'Publish Listing'}
             </button>
           </div>
         </form>

@@ -1,6 +1,7 @@
 import { Db, Collection } from 'mongodb';
 import {
   User,
+  AuthorizedStudent,
   Auction,
   Bid,
   AutoBid,
@@ -11,6 +12,7 @@ import {
 } from './types.js';
 
 export interface Collections {
+  authorizedStudents: Collection<AuthorizedStudent>;
   users: Collection<User>;
   auctions: Collection<Auction>;
   bids: Collection<Bid>;
@@ -23,6 +25,7 @@ export interface Collections {
 
 export function getCollections(db: Db): Collections {
   return {
+    authorizedStudents: db.collection<AuthorizedStudent>('authorizedStudents'),
     users: db.collection<User>('users'),
     auctions: db.collection<Auction>('auctions'),
     bids: db.collection<Bid>('bids'),
@@ -40,6 +43,16 @@ export function getCollections(db: Db): Collections {
  */
 export async function ensureIndexes(db: Db): Promise<void> {
   const collections = getCollections(db);
+
+  // 0. authorizedStudents: index on email and 'Mail ID' (non-unique to support varied college sheets)
+  await collections.authorizedStudents.createIndex(
+    { email: 1 },
+    { name: 'authorizedStudents_email_idx' }
+  );
+  await collections.authorizedStudents.createIndex(
+    { 'Mail ID': 1 },
+    { name: 'authorizedStudents_mail_id_idx' }
+  );
 
   // 1. users: unique email
   await collections.users.createIndex(

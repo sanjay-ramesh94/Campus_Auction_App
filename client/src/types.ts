@@ -1,3 +1,23 @@
+export type UserRole = 'seller' | 'buyer';
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  sem: number;
+  department?: string;
+}
+
+export type AuctionStatus =
+  | 'active'
+  | 'pending_approval'
+  | 'reserved'
+  | 'sold'
+  | 'unsold'
+  | 'closed'
+  | 'cancelled';
+
 export interface Auction {
   _id: string;
   sellerId: string;
@@ -14,7 +34,17 @@ export interface Auction {
   bidCount: number;
   closesAt: string;
   version: number;
-  status: 'active' | 'closed' | 'cancelled';
+  status: AuctionStatus;
+  outcomeReason?: string;
+
+  // Lifecycle & Handover fields
+  winningBidId?: string;
+  winnerId?: string;
+  approvalDecision?: 'approved' | 'rejected';
+  approvalReason?: string;
+  handoverStatus?: 'pending' | 'confirmed' | 'failed';
+  handoverNotes?: string;
+
   createdAt: string;
 }
 
@@ -36,11 +66,39 @@ export interface AutoBid {
   createdAt: string;
 }
 
-export interface UserPersona {
-  id: string;
-  name: string;
-  role: string;
-  avatar: string;
+export interface Question {
+  _id: string;
+  auctionId: string;
+  askerId: string;
+  askerName?: string;
+  text: string;
+  answer?: string;
+  answeredAt?: string;
+  status: 'pending' | 'answered';
+  pinned?: boolean;
+  createdAt: string;
+}
+
+export interface WatchRequest {
+  _id: string;
+  userId: string;
+  keywords: string[];
+  category?: string;
+  maxPrice?: number;
+  condition?: string;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface NotificationItem {
+  _id: string;
+  userId: string;
+  type: string;
+  title: string;
+  message: string;
+  payload: Record<string, any>;
+  readAt?: string;
+  createdAt: string;
 }
 
 export interface ToastMessage {
@@ -49,4 +107,12 @@ export interface ToastMessage {
   title: string;
   message: string;
   timestamp: number;
+}
+
+export interface ProposalCard {
+  auctionId: string;
+  itemTitle: string;
+  recommendedBid: number;
+  maxLimit: number;
+  closesAt: string;
 }
