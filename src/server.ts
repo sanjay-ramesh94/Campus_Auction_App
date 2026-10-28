@@ -31,6 +31,19 @@ import {
   relistUnsoldAuction,
   getSellerDetailsForWinner,
 } from './seller/sellerController.js';
+import {
+  processAssistantMessage,
+  approveProposal,
+  dismissProposal,
+} from './assistant/assistantService.js';
+import {
+  getUserWatches,
+  createWatch,
+  toggleWatchActive,
+  deleteWatch,
+  matchWatchesForNewListing,
+  handleWatchOutbid,
+} from './assistant/watchService.js';
 
 dotenv.config();
 
@@ -268,6 +281,20 @@ async function startDevServer() {
     }
   });
 
+  // Server-side event subscriber: handle OUTBID events for watch auto-bid state
+  eventHub.subscribe(async (event) => {
+    if (event.type === 'OUTBID' && event.targetUserId && event.auctionId) {
+      try {
+        const newPrice = (event.payload as any).newPrice as number;
+        if (typeof newPrice === 'number') {
+          await handleWatchOutbid(db, event.targetUserId, event.auctionId, newPrice);
+        }
+      } catch (err) {
+        console.error('[WatchOutbid Handler]', err);
+      }
+    }
+  });
+
   const server = http.createServer(async (req, res) => {
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -319,19 +346,21 @@ async function startDevServer() {
       const auctionId = url.searchParams.get('auctionId');
       const auth = getAuthUser(req, queryToken || undefined);
 
-      if (auth && auctionId) {
-        // Authenticated roster student joining presence for this auction
-        sseClientMeta.set(res, { userId: auth.userId, auctionId });
-        presenceManager
-          .addConnection(auctionId, {
-            userId: auth.userId,
-            name: auth.name,
-          })
-          .then((payload) => {
-            try {
-              res.write(`data: ${JSON.stringify(payload)}\n\n`);
-            } catch {}
-          });
+      if (auth) {
+        // Authenticated user connected
+        sseClientMeta.set(res, { userId: auth.userId, auctionId: auctionId || undefined });
+        if (auctionId) {
+          presenceManager
+            .addConnection(auctionId, {
+              userId: auth.userId,
+              name: auth.name,
+            })
+            .then((payload) => {
+              try {
+                res.write(`data: ${JSON.stringify(payload)}\n\n`);
+              } catch {}
+            });
+        }
       }
 
       req.on('close', () => {
@@ -757,6 +786,11 @@ async function startDevServer() {
         };
 
         await cols.auctions.insertOne(newAuction);
+
+        // Run matcher for active watches (Never miss what you need)
+        matchWatchesForNewListing(db, newAuction, client).catch((err) =>
+          console.error('[Watch Matcher Error]:', err)
+        );
 
         // Check for matching "Looking for..." watch requests and notify buyers
         const matches = await cols.watchRequests
@@ -1790,7 +1824,88 @@ async function startDevServer() {
       return sendJson(res, 200, { ok: true });
     }
 
+
+    // ==========================================
+    // WATCHES (with Auto-Bid support)
+    // ==========================================
+
+    // GET /api/watches - list all user watches
+    if (url.pathname === '/api/watches' && req.method === 'GET') {
+      const auth = getAuthUser(req);
+      if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
+      const watches = await getUserWatches(db, new ObjectId(auth.userId));
+      return sendJson(res, 200, { ok: true, watches });
+    }
+
+    // POST /api/watches - create a watch (with optional auto-bid)
+    // Body: { keywords, category?, maxPrice?, autoBid?, maxBudget?, conditionFilter?, authorizedAt? }
+    if (url.pathname === '/api/watches' && req.method === 'POST') {
+      const auth = getAuthUser(req);
+      if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
+      try {
+        const body = await readBody(req);
+        // authorizedAt must come from client confirmation dialog; userId always from JWT
+        const authorizedAt = body.authorizedAt ? new Date(body.authorizedAt) : undefined;
+        const result = await createWatch(
+          db,
+          new ObjectId(auth.userId),
+          {
+            keywords: body.keywords || [],
+            category: body.category,
+            maxPrice: body.maxPrice,
+            autoBid: Boolean(body.autoBid),
+            maxBudget: body.maxBudget,
+            conditionFilter: body.conditionFilter,
+          },
+          authorizedAt,
+          client
+        );
+        return sendJson(res, result.statusCode, result);
+      } catch (err: any) {
+        return sendJson(res, 500, { ok: false, error: err.message });
+      }
+    }
+
+    // PUT or PATCH /api/watches/:id/toggle - pause or resume
+    const watchToggleMatch = url.pathname.match(/^\/api\/watches\/([a-f0-9]{24})\/toggle$/);
+    if (watchToggleMatch && (req.method === 'PUT' || req.method === 'PATCH')) {
+      const auth = getAuthUser(req);
+      if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
+      const result = await toggleWatchActive(db, new ObjectId(auth.userId), new ObjectId(watchToggleMatch[1]), client);
+      return sendJson(res, result.statusCode, result);
+    }
+
+    // DELETE /api/watches/:id/autobid - cancel the active auto-bid only (keep watch, set paused)
+    const watchCancelAutoBidMatch = url.pathname.match(/^\/api\/watches\/([a-f0-9]{24})\/autobid$/);
+    if (watchCancelAutoBidMatch && req.method === 'DELETE') {
+      const auth = getAuthUser(req);
+      if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
+      const watchId = new ObjectId(watchCancelAutoBidMatch[1]);
+      const watch = await cols.watches.findOne({ _id: watchId, userId: new ObjectId(auth.userId) });
+      if (!watch) return sendJson(res, 404, { ok: false, error: 'Watch not found.' });
+
+      // Remove the autoBid record from autoBids collection if it exists
+      if (watch.activeAutoBidAuctionId) {
+        await cols.autoBids.deleteOne({ auctionId: watch.activeAutoBidAuctionId, userId: new ObjectId(auth.userId), watchId });
+      }
+      await cols.watches.updateOne(
+        { _id: watchId },
+        { $set: { activeAutoBidAuctionId: null, status: 'paused', active: false } }
+      );
+      return sendJson(res, 200, { ok: true, message: 'Auto-bid cancelled. Watch is now paused.' });
+    }
+
+    // DELETE /api/watches/:id - delete watch entirely
+    const watchDeleteMatch = url.pathname.match(/^\/api\/watches\/([a-f0-9]{24})$/);
+    if (watchDeleteMatch && req.method === 'DELETE') {
+      const auth = getAuthUser(req);
+      if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
+      const result = await deleteWatch(db, new ObjectId(auth.userId), new ObjectId(watchDeleteMatch[1]));
+      return sendJson(res, result.statusCode, result);
+    }
+
     // AI Assistant Tab: Chat & Action Proposal Cards
+
     if (url.pathname === '/api/ai/assistant' && req.method === 'POST') {
       const auth = getAuthUser(req);
       if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
@@ -1877,6 +1992,89 @@ async function startDevServer() {
         { $set: { readAt: new Date() } }
       );
       return sendJson(res, 200, { ok: true });
+    }
+
+    // ==========================================
+    // AI Assistant & Gemini Routes
+    // ==========================================
+    if (url.pathname === '/api/assistant' && req.method === 'POST') {
+      const auth = getAuthUser(req);
+      if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized. Please log in.' });
+
+      try {
+        const body = await readBody(req);
+        const result = await processAssistantMessage(
+          db,
+          new ObjectId(auth.userId),
+          body.message || ''
+        );
+        return sendJson(res, result.ok ? 200 : 400, result);
+      } catch (err: any) {
+        return sendJson(res, 500, {
+          ok: false,
+          error: err.message,
+          reply: 'I encountered an unexpected error. Please try again shortly.',
+        });
+      }
+    }
+
+    if (url.pathname === '/api/assistant/history' && req.method === 'GET') {
+      const auth = getAuthUser(req);
+      if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
+
+      const messages = await cols.assistantMessages
+        .find({ userId: new ObjectId(auth.userId) })
+        .sort({ createdAt: 1 })
+        .limit(20)
+        .toArray();
+
+      return sendJson(res, 200, { ok: true, messages });
+    }
+
+    // Approve Proposal: POST /api/assistant/proposals/:id/approve
+    if (
+      url.pathname.startsWith('/api/assistant/proposals/') &&
+      url.pathname.endsWith('/approve') &&
+      req.method === 'POST'
+    ) {
+      const auth = getAuthUser(req);
+      if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
+
+      const parts = url.pathname.split('/');
+      const proposalIdStr = parts[parts.length - 2];
+      if (!ObjectId.isValid(proposalIdStr)) {
+        return sendJson(res, 400, { ok: false, error: 'Invalid proposal ID' });
+      }
+
+      const result = await approveProposal(
+        db,
+        new ObjectId(auth.userId),
+        new ObjectId(proposalIdStr)
+      );
+      return sendJson(res, result.statusCode, result);
+    }
+
+    // Dismiss Proposal: POST /api/assistant/proposals/:id/dismiss
+    if (
+      url.pathname.startsWith('/api/assistant/proposals/') &&
+      url.pathname.endsWith('/dismiss') &&
+      req.method === 'POST'
+    ) {
+      const auth = getAuthUser(req);
+      if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
+
+      const parts = url.pathname.split('/');
+      const proposalIdStr = parts[parts.length - 2];
+      if (!ObjectId.isValid(proposalIdStr)) {
+        return sendJson(res, 400, { ok: false, error: 'Invalid proposal ID' });
+      }
+
+      const result = await dismissProposal(
+        db,
+        new ObjectId(auth.userId),
+        new ObjectId(proposalIdStr)
+      );
+      return sendJson(res, result.statusCode, result);
     }
 
     // 404

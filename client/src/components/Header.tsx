@@ -95,6 +95,14 @@ export const Header: React.FC<HeaderProps> = ({
             )}
             {user.role !== 'seller' && (
               <button
+                className={`header-tab-btn ${activeTab === 'watches' || activeTab === 'watchlist' ? 'active' : ''}`}
+                onClick={() => handleTabClick('watchlist')}
+              >
+                Watches & Alerts
+              </button>
+            )}
+            {user.role !== 'seller' && (
+              <button
                 className={`header-tab-btn ${activeTab === 'ai_assistant' ? 'active' : ''}`}
                 onClick={() => handleTabClick('ai_assistant')}
               >

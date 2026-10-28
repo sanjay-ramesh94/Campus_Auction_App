@@ -13,6 +13,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@google/genai": "^2.31.0",
     "dotenv": "^16.4.7",
     "mongodb": "^6.13.0"
   },

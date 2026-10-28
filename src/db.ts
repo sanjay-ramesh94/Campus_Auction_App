@@ -7,6 +7,9 @@ import {
   AutoBid,
   Question,
   WatchRequest,
+  Watch,
+  AssistantProposal,
+  AssistantChatMessage,
   Notification,
   AuctionEvent,
 } from './types.js';
@@ -19,6 +22,9 @@ export interface Collections {
   autoBids: Collection<AutoBid>;
   questions: Collection<Question>;
   watchRequests: Collection<WatchRequest>;
+  watches: Collection<Watch>;
+  assistantProposals: Collection<AssistantProposal>;
+  assistantMessages: Collection<AssistantChatMessage>;
   notifications: Collection<Notification>;
   events: Collection<AuctionEvent>;
 }
@@ -32,6 +38,9 @@ export function getCollections(db: Db): Collections {
     autoBids: db.collection<AutoBid>('autoBids'),
     questions: db.collection<Question>('questions'),
     watchRequests: db.collection<WatchRequest>('watchRequests'),
+    watches: db.collection<Watch>('watches'),
+    assistantProposals: db.collection<AssistantProposal>('assistantProposals'),
+    assistantMessages: db.collection<AssistantChatMessage>('assistantMessages'),
     notifications: db.collection<Notification>('notifications'),
     events: db.collection<AuctionEvent>('events'),
   };
@@ -127,9 +136,21 @@ export async function ensureIndexes(db: Db): Promise<void> {
 
   // 7. notifications:
   // - compound index on { userId, readAt }
+  // - unique partial index on { watchId, listingId }
   await collections.notifications.createIndex(
     { userId: 1, readAt: 1 },
     { name: 'notifications_userId_readAt' }
+  );
+  await collections.notifications.createIndex(
+    { watchId: 1, listingId: 1 },
+    {
+      unique: true,
+      partialFilterExpression: {
+        watchId: { $exists: true },
+        listingId: { $exists: true },
+      },
+      name: 'notifications_watchId_listingId_unique',
+    }
   );
 
   // 8. events:
@@ -137,5 +158,57 @@ export async function ensureIndexes(db: Db): Promise<void> {
   await collections.events.createIndex(
     { auctionId: 1, ts: 1 },
     { name: 'events_auctionId_ts' }
+  );
+
+  // 9. watches:
+  // - compound index on { active, category }
+  // - compound index on { userId, active }
+  // - compound index on { autoBid, status, expiresAt } for matcher queries
+  await collections.watches.createIndex(
+    { active: 1, category: 1 },
+    { name: 'watches_active_category' }
+  );
+  await collections.watches.createIndex(
+    { userId: 1, active: 1 },
+    { name: 'watches_userId_active' }
+  );
+  await collections.watches.createIndex(
+    { autoBid: 1, status: 1, expiresAt: 1 },
+    { name: 'watches_autoBid_status_expiresAt' }
+  );
+  await collections.watches.createIndex(
+    { activeAutoBidAuctionId: 1 },
+    {
+      sparse: true,
+      name: 'watches_activeAutoBidAuctionId',
+    }
+  );
+
+  // Unique index on (watchId, listingId) in autoBids collection
+  // Prevents retry from creating two auto-bids for the same watch+listing
+  await collections.autoBids.createIndex(
+    { watchId: 1, listingId: 1 },
+    {
+      unique: true,
+      partialFilterExpression: {
+        watchId: { $exists: true },
+        listingId: { $exists: true },
+      },
+      name: 'autoBids_watchId_listingId_unique',
+    }
+  );
+
+  // 10. assistantProposals:
+  // - compound index on { userId, expiresAt }
+  await collections.assistantProposals.createIndex(
+    { userId: 1, expiresAt: 1 },
+    { name: 'assistantProposals_userId_expiresAt' }
+  );
+
+  // 11. assistantMessages:
+  // - compound index on { userId, createdAt }
+  await collections.assistantMessages.createIndex(
+    { userId: 1, createdAt: -1 },
+    { name: 'assistantMessages_userId_createdAt' }
   );
 }

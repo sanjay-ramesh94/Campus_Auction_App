@@ -7,6 +7,7 @@ import { LiveAuctionDetail } from './components/LiveAuctionDetail';
 import { SellerDashboard } from './components/SellerDashboard';
 import { MyBidsTab } from './components/MyBidsTab';
 import { AiAssistantTab } from './components/AiAssistantTab';
+import { WatchlistTab } from './components/WatchlistTab';
 import { OnboardingModal } from './components/OnboardingModal';
 import { Toast } from './components/Toast';
 
@@ -74,15 +75,6 @@ export function App() {
     const timer = setInterval(fetchNotifications, 6000);
     return () => clearInterval(timer);
   }, [fetchNotifications]);
-
-  // Request browser push notification permission on mount
-  useEffect(() => {
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      if (Notification.permission === 'default') {
-        Notification.requestPermission().catch(() => {});
-      }
-    }
-  }, []);
 
   // Browser Push Notification trigger
   const sendBrowserPush = useCallback((title: string, body: string) => {
@@ -194,6 +186,44 @@ export function App() {
             sendBrowserPush('⚠️ Outbid on CampusBid', `New highest bid of ₹${event.payload?.newPrice} on "${title}".`);
             playAlertChime('lost');
           }
+        } else if (event.type === 'AUTO_BID_PLACED') {
+          if (isForMe) {
+            const title = event.payload?.title || 'Item';
+            const price = event.payload?.currentPrice ?? event.payload?.price ?? '';
+            const maxBudget = event.payload?.maxBudget ?? '';
+            const msg = `Auto-bid placed on "${title}" at ₹${price} (Budget cap ₹${maxBudget}).`;
+            showToast('success', '⚡ Auto-Bid Placed!', msg);
+            sendBrowserPush('⚡ CampusBid — Auto-Bid Placed', msg);
+            playAlertChime('won');
+          }
+        } else if (event.type === 'AUTO_BID_OUTBID') {
+          if (isForMe) {
+            const title = event.payload?.title || 'Item';
+            const newPrice = event.payload?.newPrice ?? '';
+            const maxBudget = event.payload?.maxBudget ?? '';
+            const msg = `Outbid on "${title}" at ₹${newPrice}. Exceeds your ₹${maxBudget} budget. Auto-bid paused.`;
+            showToast('warning', '⚠️ Auto-Bid Budget Exceeded', msg);
+            sendBrowserPush('⚠️ Auto-Bid Limit Reached', msg);
+            playAlertChime('lost');
+          }
+        } else if (event.type === 'WATCH_FULFILLED') {
+          if (isForMe) {
+            const title = event.payload?.title || 'Item';
+            const price = event.payload?.price ?? '';
+            const msg = `Congratulations! You won "${title}" (₹${price}) via your auto-bid watch!`;
+            showToast('success', '🏆 Watch Won & Fulfilled!', msg);
+            sendBrowserPush('🏆 CampusBid — Watch Won!', msg);
+            playAlertChime('won');
+          }
+        } else if (event.type === 'WATCH_MATCH') {
+          if (isForMe) {
+            const title = event.payload?.title || 'Matching Item';
+            const price = event.payload?.price ? ` at ₹${event.payload.price}` : '';
+            const msg = `New listing matching your alert: "${title}"${price}!`;
+            showToast('info', '🔔 Watch Alert Match!', msg);
+            sendBrowserPush('🔔 CampusBid Watch Alert!', msg);
+            playAlertChime('won');
+          }
         } else if (event.type === 'AUCTION_ENDED') {
           if (isForMe) {
             showToast('info', 'Auction Ended', `Status: ${event.payload?.status}`);
@@ -212,10 +242,6 @@ export function App() {
     setToken(authToken);
     localStorage.setItem('campus_auction_user', JSON.stringify(loggedInUser));
     localStorage.setItem('campus_auction_token', authToken);
-
-    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission().catch(() => {});
-    }
 
     if (loggedInUser.role === 'seller') {
       setActiveTab('sell');
@@ -345,10 +371,25 @@ export function App() {
               />
             )}
 
+            {/* Watches & Auto-Bids Tab (Buyer Only) */}
+            {(activeTab === 'watches' || activeTab === 'watchlist') && user.role !== 'seller' && (
+              <div className="app-body-container">
+                <WatchlistTab
+                  token={token}
+                  showToast={showToast}
+                  onSelectAuction={handleSelectAuction}
+                />
+              </div>
+            )}
+
             {/* AI Assistant Tab (Buyer Only) */}
             {activeTab === 'ai_assistant' && user.role !== 'seller' && (
               <div className="app-body-container">
-                <AiAssistantTab token={token} showToast={showToast} />
+                <AiAssistantTab
+                  token={token}
+                  showToast={showToast}
+                  onSelectAuction={handleSelectAuction}
+                />
               </div>
             )}
           </>

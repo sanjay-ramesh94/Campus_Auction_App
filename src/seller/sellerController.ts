@@ -1,6 +1,7 @@
 import { Db, ObjectId } from 'mongodb';
 import { getCollections } from '../db.js';
 import { Auction } from '../types.js';
+import { matchWatchesForNewListing } from '../assistant/watchService.js';
 
 export interface BuyerContactDetails {
   name: string;
@@ -199,6 +200,9 @@ export async function relistUnsoldAuction(
   };
 
   await cols.auctions.insertOne(newAuction);
+  matchWatchesForNewListing(db, newAuction).catch((err) =>
+    console.error('[Relist Watch Matcher Error]:', err)
+  );
   return { ok: true, statusCode: 201, data: newAuction };
 }
 

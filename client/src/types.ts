@@ -157,6 +157,72 @@ export interface ProposalCard {
   closesAt: string;
 }
 
+export type WatchStatus = 'active' | 'paused' | 'fulfilled' | 'expired';
+
+export interface WatchItem {
+  _id: string;
+  userId: string;
+  keywords: string[];
+  category?: string;
+  maxPrice?: number;
+  // Auto-bid fields
+  autoBid: boolean;
+  maxBudget?: number;
+  conditionFilter?: string;
+  status: WatchStatus;
+  activeAutoBidAuctionId?: string | null;
+  authorizedAt?: string;
+  active: boolean;
+  createdAt: string;
+  expiresAt: string;
+  lastMatchedAt?: string | null;
+}
+
+export interface AssistantProposalItem {
+  _id: string;
+  userId: string;
+  type: 'autobid' | 'watch';
+  parameters: {
+    listingId?: string;
+    itemTitle?: string;
+    maxAmount?: number;
+    currentPrice?: number;
+    keywords?: string[];
+    category?: string;
+    maxPrice?: number;
+    image?: string;
+    [key: string]: any;
+  };
+  summary: string;
+  status: 'pending' | 'approved' | 'dismissed' | 'expired';
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface AssistantListingCard {
+  id: string;
+  title: string;
+  category: string;
+  condition: string;
+  startPrice: number;
+  currentPrice: number | null;
+  bidCount: number;
+  timeLeft: string;
+  image: string;
+}
+
+export interface AssistantChatMessage {
+  _id?: string;
+  id?: string;
+  sender: 'user' | 'assistant';
+  role?: 'user' | 'assistant';
+  text: string;
+  content?: string;
+  proposals?: AssistantProposalItem[];
+  listingCards?: AssistantListingCard[];
+  createdAt?: string;
+}
+
 export interface PublicPresenceUser {
   userId: string;
   name: string;

@@ -1,6 +1,7 @@
 import { Db, ObjectId } from 'mongodb';
 import { getCollections } from './db.js';
 import { eventHub } from './bidding/events.js';
+import { deactivateWatchesOnWin, handleWatchOutbid, expireWatches } from './assistant/watchService.js';
 
 export function startAuctionSweeper(db: Db, intervalMs: number = 5000): () => void {
   const cols = getCollections(db);
@@ -10,7 +11,7 @@ export function startAuctionSweeper(db: Db, intervalMs: number = 5000): () => vo
       const now = new Date();
       const expired = await cols.auctions
         .find({
-          status: 'active',
+          status: { $in: ['active', 'live'] },
           closesAt: { $lte: now },
         })
         .toArray();
@@ -57,6 +58,9 @@ export function startAuctionSweeper(db: Db, intervalMs: number = 5000): () => vo
             payload: { auctionId: a._id, amount: a.currentPrice, title: a.title },
             createdAt: now,
           });
+
+          // Deactivate any matching active watch for the winning student
+          await deactivateWatchesOnWin(db, a.leaderId, a);
 
           // Notify all other bidders that the auction has ended and they were outbid
           const outbidBids = await cols.bids
@@ -155,5 +159,15 @@ export function startAuctionSweeper(db: Db, intervalMs: number = 5000): () => vo
   const timer = setInterval(sweep, intervalMs);
   sweep(); // Run immediately on start
 
-  return () => clearInterval(timer);
+  // Hourly watch expiry sweep
+  const expireTimer = setInterval(async () => {
+    try {
+      const count = await expireWatches(db);
+      if (count > 0) console.log('[Sweeper] Expired', count, 'watches.');
+    } catch (err) {
+      console.error('[Sweeper] Watch expiry error:', err);
+    }
+  }, 60 * 60 * 1000);
+
+  return () => { clearInterval(timer); clearInterval(expireTimer); };
 }

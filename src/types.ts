@@ -91,8 +91,11 @@ export interface AutoBid {
   auctionId: ObjectId;
   userId: ObjectId;
   maxAmount: number;             // Maximum cap in integer rupees
+  watchId?: ObjectId;            // Set when triggered by a Watch auto-bid
+  listingId?: ObjectId;          // Same as auctionId, for unique index idempotency
   createdAt: Date;
 }
+
 
 export type QuestionStatus = 'pending' | 'answered';
 
@@ -120,13 +123,88 @@ export interface WatchRequest {
   createdAt: Date;
 }
 
+export type WatchStatus = 'active' | 'paused' | 'fulfilled' | 'expired';
+
+export interface Watch {
+  _id: ObjectId;
+  userId: ObjectId;
+  keywords: string[];
+  category?: string;
+  maxPrice?: number;          // legacy: max price for notification filtering
+
+  // Auto-bid fields
+  autoBid: boolean;           // whether auto-bidding is enabled
+  maxBudget?: number;         // hard cap in rupees — NEVER exceeded
+  conditionFilter?: string;   // optional: only match this condition
+  status: WatchStatus;        // active | paused | fulfilled | expired
+  activeAutoBidAuctionId?: ObjectId | null; // currently live auto-bid auction
+  authorizedAt?: Date;        // when the student confirmed the auto-bid
+
+  active: boolean;            // legacy compat: active = status === 'active'
+  createdAt: Date;
+  expiresAt: Date;            // 30 days
+  lastMatchedAt?: Date | null;
+}
+
+export type AssistantProposalType = 'autobid' | 'watch' | 'watch_autobid';
+
+export interface AssistantProposal {
+  _id: ObjectId;
+  userId: ObjectId;
+  type: AssistantProposalType;
+  parameters: {
+    listingId?: string;
+    itemTitle?: string;
+    maxAmount?: number;
+    currentPrice?: number;
+    keywords?: string[];
+    category?: string;
+    maxPrice?: number;
+    maxBudget?: number;         // for watch_autobid proposals
+    conditionFilter?: string;   // for watch_autobid proposals
+    autoBid?: boolean;
+    image?: string;
+    [key: string]: any;
+  };
+  summary: string;
+  status: 'pending' | 'approved' | 'dismissed' | 'expired';
+  createdAt: Date;
+  expiresAt: Date; // 10 minutes
+}
+
+export interface SanitizedListingCard {
+  id: string;
+  title: string;
+  category: string;
+  condition: string;
+  startPrice: number;
+  currentPrice: number | null;
+  bidCount: number;
+  timeLeft: string;
+  image: string;
+}
+
+export interface AssistantChatMessage {
+  _id: ObjectId;
+  userId: ObjectId;
+  role: 'user' | 'assistant';
+  content: string;
+  proposals?: AssistantProposal[];
+  listingCards?: SanitizedListingCard[];
+  createdAt: Date;
+}
+
 export interface Notification {
   _id: ObjectId;
   userId: ObjectId;
   type: string;
   title: string;
   message: string;
-  payload: Record<string, unknown>;
+  price?: number;
+  link?: string;
+  watchId?: ObjectId;
+  listingId?: ObjectId;
+  payload?: Record<string, unknown>;
   readAt?: Date;
   createdAt: Date;
 }
@@ -188,7 +266,11 @@ export interface OutboxEvent {
     | 'AUCTION_APPROVED'
     | 'AUCTION_REJECTED'
     | 'HANDOVER_CONFIRMED'
-    | 'WATCH_MATCH';
+    | 'WATCH_MATCH'
+    | 'AUTO_BID_PLACED'
+    | 'AUTO_BID_OUTBID'
+    | 'AUTO_BID_FAILED'
+    | 'WATCH_FULFILLED';
   targetUserId?: ObjectId;
   auctionId: ObjectId;
   payload: Record<string, unknown>;
