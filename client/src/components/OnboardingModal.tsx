@@ -48,8 +48,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       });
 
       onComplete(name.trim() || user.name);
-    } catch (err: any) {
-      console.error(err);
+    } catch {
       onComplete();
     } finally {
       setLoading(false);
@@ -58,21 +57,22 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
   return (
     <div className="modal-overlay">
-      <div className="modal-box" style={{ maxWidth: '440px' }}>
-        <div style={{ textAlign: 'center', marginBottom: '0.5rem' }}>
-          <div style={{ fontSize: '2.5rem' }}>🎉</div>
-          <h2 style={{ fontSize: '1.35rem', fontWeight: 800 }}>Welcome to CampusBid!</h2>
-          <p style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
-            Personalize your campus profile and notification settings.
-          </p>
-        </div>
+      <div className="modal-content" style={{ maxWidth: '440px', textAlign: 'center', padding: '2.25rem 2rem' }}>
+        <div style={{ fontSize: '2.5rem', marginBottom: '0.35rem' }}>🎉</div>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.45rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.35rem' }}>
+          Welcome to CampusBid!
+        </h2>
+        <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', marginBottom: '1.5rem', lineHeight: '1.5' }}>
+          Personalize your campus profile and notification settings.
+        </p>
 
-        <form onSubmit={handleSave} className="form-grid">
-          <div className="form-group">
-            <label>Display Name</label>
+        <form onSubmit={handleSave} style={{ textAlign: 'left' }}>
+          <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+            <label className="form-label">Display Name</label>
             <input
               type="text"
-              className="form-input"
+              className="input-field"
+              style={{ paddingLeft: '1rem' }}
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Your preferred name"
@@ -80,24 +80,50 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
             />
           </div>
 
-          <div className="onboard-push-row">
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '1rem',
+              padding: '0.9rem',
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              borderRadius: '10px',
+              marginBottom: '1.5rem',
+            }}
+          >
             <div>
-              <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>Browser Push Notifications</div>
-              <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+              <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                Browser Push Notifications
+              </div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
                 Instant desktop alerts when you are outbid or when watch items are listed.
               </div>
             </div>
             <button
               type="button"
-              className={`btn ${pushEnabled ? 'btn-secondary' : 'btn-primary'}`}
-              style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem', whiteSpace: 'nowrap' }}
+              className="btn-outline-action"
+              style={{
+                fontSize: '0.78rem',
+                padding: '0.4rem 0.85rem',
+                whiteSpace: 'nowrap',
+                background: pushEnabled ? '#ecfdf5' : '#ffffff',
+                borderColor: pushEnabled ? '#10b981' : '#0f172a',
+                color: pushEnabled ? '#059669' : '#0f172a',
+                fontWeight: 600,
+              }}
               onClick={handleRequestPush}
             >
               {pushEnabled ? '✓ Enabled' : 'Enable'}
             </button>
           </div>
 
-          <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem' }} disabled={loading}>
+          <button
+            type="submit"
+            className="btn-primary-dark"
+            disabled={loading}
+          >
             {loading ? 'Saving...' : 'Get Started →'}
           </button>
         </form>

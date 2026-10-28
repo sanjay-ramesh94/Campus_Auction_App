@@ -82,12 +82,51 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
     } catch {}
   };
 
+  // Live polling for auction details & Q&A every 2.5s
   useEffect(() => {
     fetchDetails();
     fetchQuestions();
-    const interval = setInterval(fetchDetails, 6000);
+    const interval = setInterval(() => {
+      fetchDetails();
+      fetchQuestions();
+    }, 2500);
     return () => clearInterval(interval);
   }, [auctionId, token]);
+
+  // Real-time instant SSE listener for questions, answers, and bids
+  useEffect(() => {
+    const es = new EventSource('/api/events');
+    es.onmessage = (e) => {
+      try {
+        const event = JSON.parse(e.data);
+        if (
+          event.auctionId === auctionId ||
+          event.type === 'QUESTION_ASKED' ||
+          event.type === 'QUESTION_ANSWERED' ||
+          event.type === 'BID_PLACED' ||
+          event.type === 'DEADLINE_EXTENDED'
+        ) {
+          fetchQuestions();
+          fetchDetails();
+        }
+      } catch {}
+    };
+    return () => es.close();
+  }, [auctionId]);
+
+  // Click outside listener for participant popovers
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.participant-avatar-wrapper')) {
+        setActivePopoverId(null);
+      }
+    };
+    if (activePopoverId) {
+      document.addEventListener('mousedown', handleOutsideClick);
+      return () => document.removeEventListener('mousedown', handleOutsideClick);
+    }
+  }, [activePopoverId]);
 
   // Countdown timer
   useEffect(() => {

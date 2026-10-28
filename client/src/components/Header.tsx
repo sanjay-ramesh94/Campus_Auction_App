@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import type { User, NotificationItem } from '../types';
 
 interface HeaderProps {
@@ -30,6 +30,26 @@ export const Header: React.FC<HeaderProps> = ({
   const [showNotifs, setShowNotifs] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [sellerGuardAlert, setSellerGuardAlert] = useState(false);
+
+  const notifsRef = useRef<HTMLDivElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdowns when clicking outside anywhere on the page
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false);
+      }
+      if (notifsRef.current && !notifsRef.current.contains(event.target as Node)) {
+        setShowNotifs(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   const handleTabClick = (tabKey: string) => {
     if (tabKey === 'sell' && user.role !== 'seller') {
@@ -94,7 +114,7 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
 
             {/* Notification Bell */}
-            <div style={{ position: 'relative' }}>
+            <div ref={notifsRef} style={{ position: 'relative' }}>
               <button
                 className="header-icon-btn"
                 title="Notifications"
@@ -111,7 +131,10 @@ export const Header: React.FC<HeaderProps> = ({
                     {unreadCount > 0 && (
                       <button
                         style={{ background: 'none', border: 'none', color: '#0f172a', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}
-                        onClick={onMarkAllNotificationsRead}
+                        onClick={() => {
+                          onMarkAllNotificationsRead();
+                          setShowNotifs(false);
+                        }}
                       >
                         Mark all read
                       </button>
@@ -126,7 +149,10 @@ export const Header: React.FC<HeaderProps> = ({
                       <div
                         key={n._id}
                         className={`notification-item ${!n.readAt ? 'unread' : ''}`}
-                        onClick={() => onMarkNotificationRead(n._id)}
+                        onClick={() => {
+                          onMarkNotificationRead(n._id);
+                          setShowNotifs(false);
+                        }}
                       >
                         <div className="notification-title">{n.title}</div>
                         <div className="notification-msg">{n.message}</div>
@@ -137,8 +163,8 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </div>
 
-            {/* User Profile Avatar */}
-            <div style={{ position: 'relative' }}>
+            {/* User Profile Avatar with Click-Outside Ref */}
+            <div ref={userMenuRef} style={{ position: 'relative' }}>
               <button
                 className="user-avatar-btn"
                 onClick={() => setShowUserMenu(!showUserMenu)}
@@ -157,18 +183,42 @@ export const Header: React.FC<HeaderProps> = ({
                     </div>
                   </div>
 
-                  <button className="user-menu-item" onClick={() => onSelectTab('listings')}>
+                  <button
+                    className="user-menu-item"
+                    onClick={() => {
+                      onSelectTab('listings');
+                      setShowUserMenu(false);
+                    }}
+                  >
                     🛍️ Browse Listings
                   </button>
-                  <button className="user-menu-item" onClick={() => onSelectTab('my_bids')}>
+                  <button
+                    className="user-menu-item"
+                    onClick={() => {
+                      onSelectTab('my_bids');
+                      setShowUserMenu(false);
+                    }}
+                  >
                     🏷️ My Bids & Activity
                   </button>
                   {user.role === 'seller' && (
-                    <button className="user-menu-item" onClick={() => onSelectTab('sell')}>
+                    <button
+                      className="user-menu-item"
+                      onClick={() => {
+                        onSelectTab('sell');
+                        setShowUserMenu(false);
+                      }}
+                    >
                       📊 Seller Dashboard
                     </button>
                   )}
-                  <button className="user-menu-item logout" onClick={onLogout}>
+                  <button
+                    className="user-menu-item logout"
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      onLogout();
+                    }}
+                  >
                     🚪 Sign Out
                   </button>
                 </div>

@@ -817,6 +817,14 @@ async function startDevServer() {
         createdAt: new Date(),
       });
 
+      await eventHub.emitAll([
+        {
+          type: 'QUESTION_ANSWERED',
+          auctionId: q.auctionId,
+          payload: { questionId: q._id, answer: String(answer).trim() },
+        },
+      ]);
+
       return sendJson(res, 200, { ok: true, message: 'Answer submitted' });
     }
 
@@ -1193,6 +1201,14 @@ async function startDevServer() {
             createdAt: new Date(),
           });
         }
+
+        await eventHub.emitAll([
+          {
+            type: 'QUESTION_ASKED',
+            auctionId: aId,
+            payload: { questionId: newQ._id, text: trimmed },
+          },
+        ]);
 
         return sendJson(res, 201, { ok: true, question: newQ });
       } catch (err: any) {
