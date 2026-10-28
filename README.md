@@ -54,22 +54,6 @@ campus-auction/
 
 ---
 
-## Getting Started
-
-### 1. Prerequisites
-- Node.js v18+
-- Docker (optional, for local MongoDB replica set)
-
-### 2. Run Local MongoDB Replica Set
-```bash
-docker compose up -d
-```
-Or start mongod locally with a replica set:
-```bash
-mongod --replSet rs0 --dbpath ./data
-# In another terminal:
-mongosh --eval "rs.initiate()"
-```
 
 ### 3. Run the Test Suite
 Tests utilize `MongoMemoryReplSet` for fully isolated in-memory replica set validation without needing an external MongoDB instance:
