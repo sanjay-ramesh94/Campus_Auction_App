@@ -243,7 +243,7 @@ export const WatchlistTab: React.FC<WatchlistTabProps> = ({
     <div className="watchlist-tab-container">
       {/* Top Header Bar */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-        <h2 style={{ fontSize: '1.4rem', fontWeight: 700, margin: 0, color: '#f8fafc' }}>
+        <h2 style={{ fontSize: '1.4rem', fontWeight: 700, margin: 0, color: '#0f172a' }}>
           Saved Watches
         </h2>
         <div>
