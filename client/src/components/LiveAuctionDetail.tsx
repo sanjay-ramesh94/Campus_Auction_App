@@ -62,48 +62,47 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
     formatted: '27m 4s',
   });
 
-  // Unified live participants with presence merged
+  // Only students who are currently live/online in the auction room
   const unifiedParticipants = React.useMemo(() => {
-    const list = participants.map((p, idx) => {
-      const pres = presenceUsers.find((u) => u.userId === p.id);
+    // presenceUsers contains all users with this auction open right now
+    const activeList = presenceUsers.map((pu, idx) => {
+      // Find if this live user has placed bids on this auction
+      const bidderInfo = participants.find((p) => p.id === pu.userId);
+      const isLeader = pu.isLeader || (bidderInfo && bidderInfo.status === 'leading');
+
       return {
-        id: p.id,
-        name: p.name,
-        initials: p.initials,
-        yearBranch: p.yearBranch,
-        highestBid: p.highestBid,
-        bidCount: p.bidCount,
-        status: p.status,
-        isYou: Boolean(p.isYou || (user && user.id === p.id)),
-        isBidder: true,
-        isOnline: Boolean(pres),
-        isVisible: pres ? pres.isVisible : false,
-        colorClass: p.isYou || (user && user.id === p.id) ? 'avatar-color-0' : `avatar-color-${(idx + 1) % 7}`,
+        id: pu.userId,
+        name: pu.name,
+        initials: pu.initials,
+        yearBranch: bidderInfo ? bidderInfo.yearBranch : 'Live in room',
+        highestBid: bidderInfo ? bidderInfo.highestBid : 0,
+        bidCount: bidderInfo ? bidderInfo.bidCount : 0,
+        status: isLeader ? ('leading' as const) : ('outbid' as const),
+        isYou: Boolean(user && user.id === pu.userId),
+        isBidder: Boolean(bidderInfo && bidderInfo.bidCount > 0),
+        isOnline: true,
+        isVisible: pu.isVisible,
+        colorClass:
+          user && user.id === pu.userId
+            ? 'avatar-color-0'
+            : `avatar-color-${(idx + 1) % 7}`,
       };
     });
 
-    // Also include any students currently viewing the room who haven't placed a bid yet
-    for (const pu of presenceUsers) {
-      if (!list.some((item) => item.id === pu.userId)) {
-        list.push({
-          id: pu.userId,
-          name: pu.name,
-          initials: pu.initials,
-          yearBranch: 'Spectator',
-          highestBid: 0,
-          bidCount: 0,
-          status: 'outbid' as const,
-          isYou: Boolean(user && user.id === pu.userId),
-          isBidder: false,
-          isOnline: true,
-          isVisible: pu.isVisible,
-          colorClass: user && user.id === pu.userId ? 'avatar-color-0' : `avatar-color-${(list.length + 1) % 7}`,
-        });
-      }
-    }
+    // Sort: Leading bidder first, then other active bidders by highest bid, then spectators, then away
+    activeList.sort((a, b) => {
+      if (a.status === 'leading' && b.status !== 'leading') return -1;
+      if (a.status !== 'leading' && b.status === 'leading') return 1;
+      if (a.isBidder && !b.isBidder) return -1;
+      if (!a.isBidder && b.isBidder) return 1;
+      if (b.highestBid !== a.highestBid) return b.highestBid - a.highestBid;
+      if (a.isVisible && !b.isVisible) return -1;
+      if (!a.isVisible && b.isVisible) return 1;
+      return a.name.localeCompare(b.name);
+    });
 
-    return list;
-  }, [participants, presenceUsers, user]);
+    return activeList;
+  }, [presenceUsers, participants, user]);
 
   // Human-readable local timestamp formatter with date when appropriate
   const formatBidTimestamp = (isoString: string): string => {
@@ -736,15 +735,13 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
                                 paddingTop: '0.35rem',
                                 borderTop: '1px solid rgba(255,255,255,0.08)',
                                 fontSize: '0.72rem',
-                                color: p.isOnline ? (p.isVisible ? '#34d399' : '#f59e0b') : '#94a3b8',
+                                color: p.isVisible ? '#34d399' : '#f59e0b',
                                 textAlign: 'center',
                               }}
                             >
-                              {p.isOnline
-                                ? p.isVisible
-                                  ? '🟢 In the room right now (Active)'
-                                  : '🌙 In the room (Away in background)'
-                                : '⚪ Offline (Left the room)'}
+                              {p.isVisible
+                                ? '🟢 In the room right now (Active)'
+                                : '🌙 In the room (Away in background)'}
                             </div>
 
                             {p.isBidder && (
