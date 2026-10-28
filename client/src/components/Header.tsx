@@ -10,7 +10,8 @@ interface HeaderProps {
   unreadCount: number;
   onMarkNotificationRead: (id: string) => void;
   onMarkAllNotificationsRead: () => void;
-  onOpenCreateModal: () => void;
+  searchQuery: string;
+  onSearchChange: (q: string) => void;
   onLogout: () => void;
 }
 
@@ -18,144 +19,184 @@ export const Header: React.FC<HeaderProps> = ({
   user,
   activeTab,
   onSelectTab,
-  connected,
   notifications,
   unreadCount,
   onMarkNotificationRead,
   onMarkAllNotificationsRead,
-  onOpenCreateModal,
+  searchQuery,
+  onSearchChange,
   onLogout,
 }) => {
   const [showNotifs, setShowNotifs] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [sellerGuardAlert, setSellerGuardAlert] = useState(false);
+
+  const handleTabClick = (tabKey: string) => {
+    if (tabKey === 'sell' && user.role !== 'seller') {
+      setSellerGuardAlert(true);
+      return;
+    }
+    onSelectTab(tabKey);
+  };
+
+  const initial = user.name ? user.name[0].toUpperCase() : user.role === 'seller' ? 'S' : 'B';
 
   return (
-    <header className="app-header">
-      <div className="header-inner">
-        {/* Brand */}
-        <div className="brand" onClick={() => onSelectTab(user.role === 'seller' ? 'dashboard' : 'browse')} style={{ cursor: 'pointer' }}>
-          <div className="brand-icon">🏛️</div>
-          <div>
+    <>
+      <header className="app-header">
+        <div className="header-inner">
+          {/* Logo */}
+          <div className="brand" onClick={() => onSelectTab('listings')}>
+            <div className="brand-logo-icon">🎓</div>
             <h1 className="brand-title">CampusBid</h1>
-            <p className="brand-subtitle">Campus Marketplace & Auction Engine</p>
-          </div>
-        </div>
-
-        {/* Navigation Tabs based on Role */}
-        <nav className="header-nav">
-          {user.role === 'seller' ? (
-            <>
-              <button
-                className={`nav-link ${activeTab === 'dashboard' ? 'active' : ''}`}
-                onClick={() => onSelectTab('dashboard')}
-              >
-                📊 Seller Dashboard
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={onOpenCreateModal}
-                style={{ padding: '0.45rem 1rem', fontSize: '0.8rem' }}
-              >
-                <span>+</span> Create Listing
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                className={`nav-link ${activeTab === 'browse' ? 'active' : ''}`}
-                onClick={() => onSelectTab('browse')}
-              >
-                🔍 Browse Items
-              </button>
-              <button
-                className={`nav-link ${activeTab === 'my_bids' ? 'active' : ''}`}
-                onClick={() => onSelectTab('my_bids')}
-              >
-                🏷️ My Bids
-              </button>
-              <button
-                className={`nav-link ${activeTab === 'watchlist' ? 'active' : ''}`}
-                onClick={() => onSelectTab('watchlist')}
-              >
-                🔔 Looking For...
-              </button>
-              <button
-                className={`nav-link ${activeTab === 'ai_assistant' ? 'active' : ''}`}
-                onClick={() => onSelectTab('ai_assistant')}
-              >
-                ✨ AI Assistant
-              </button>
-            </>
-          )}
-        </nav>
-
-        {/* Right Header Controls */}
-        <div className="header-controls">
-          {/* Live SSE Status */}
-          <div className={`status-pill ${connected ? 'connected' : 'connecting'}`}>
-            <span className="status-dot" />
-            <span>{connected ? 'LIVE (SSE)' : 'Syncing...'}</span>
           </div>
 
-          {/* Role & Semester Badge */}
-          <div className={`role-pill ${user.role}`}>
-            <span>{user.role === 'seller' ? '🎓' : '🎒'}</span>
-            <span>
-              {user.role.toUpperCase()} · Sem {user.sem}
-            </span>
-          </div>
-
-          {/* Notification Bell */}
-          <div className="notif-wrapper">
+          {/* Navigation Tabs */}
+          <nav className="header-nav">
             <button
-              className="btn-icon notif-btn"
-              onClick={() => setShowNotifs(!showNotifs)}
-              aria-label="Notifications"
+              className={`header-tab-btn ${activeTab === 'listings' || activeTab === 'browse' ? 'active' : ''}`}
+              onClick={() => handleTabClick('listings')}
             >
-              🔔
-              {unreadCount > 0 && <span className="notif-badge">{unreadCount}</span>}
+              Listings
             </button>
+            <button
+              className={`header-tab-btn ${activeTab === 'my_bids' ? 'active' : ''}`}
+              onClick={() => handleTabClick('my_bids')}
+            >
+              My Bids
+            </button>
+            <button
+              className={`header-tab-btn ${activeTab === 'sell' || activeTab === 'dashboard' ? 'active' : ''}`}
+              onClick={() => handleTabClick('sell')}
+            >
+              Sell
+            </button>
+            <button
+              className={`header-tab-btn ${activeTab === 'ai_assistant' ? 'active' : ''}`}
+              onClick={() => handleTabClick('ai_assistant')}
+            >
+              AI Assistant
+            </button>
+          </nav>
 
-            {showNotifs && (
-              <div className="notif-dropdown">
-                <div className="notif-dropdown-header">
-                  <span>Notifications ({unreadCount} unread)</span>
-                  {unreadCount > 0 && (
-                    <button className="notif-read-all" onClick={onMarkAllNotificationsRead}>
-                      Mark all read
-                    </button>
-                  )}
-                </div>
-                <div className="notif-dropdown-body">
+          {/* Right Header Controls */}
+          <div className="header-right">
+            {/* Search Input */}
+            <div className="header-search">
+              <span className="header-search-icon">🔍</span>
+              <input
+                type="text"
+                className="header-search-input"
+                placeholder="Search items, categories..."
+                value={searchQuery}
+                onChange={(e) => onSearchChange(e.target.value)}
+              />
+            </div>
+
+            {/* Notification Bell */}
+            <div style={{ position: 'relative' }}>
+              <button
+                className="header-icon-btn"
+                title="Notifications"
+                onClick={() => setShowNotifs(!showNotifs)}
+              >
+                <span>🔔</span>
+                {unreadCount > 0 && <span className="notif-badge">{unreadCount}</span>}
+              </button>
+
+              {showNotifs && (
+                <div className="notifications-dropdown">
+                  <div className="notifications-header">
+                    <span>Notifications ({unreadCount} new)</span>
+                    {unreadCount > 0 && (
+                      <button
+                        style={{ background: 'none', border: 'none', color: '#0f172a', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}
+                        onClick={onMarkAllNotificationsRead}
+                      >
+                        Mark all read
+                      </button>
+                    )}
+                  </div>
                   {notifications.length === 0 ? (
-                    <div className="notif-empty">No notifications yet.</div>
+                    <div style={{ textAlign: 'center', padding: '1.5rem', color: '#94a3b8', fontSize: '0.8rem' }}>
+                      No notifications yet
+                    </div>
                   ) : (
                     notifications.map((n) => (
                       <div
                         key={n._id}
-                        className={`notif-item ${!n.readAt ? 'unread' : ''}`}
+                        className={`notification-item ${!n.readAt ? 'unread' : ''}`}
                         onClick={() => onMarkNotificationRead(n._id)}
                       >
-                        <div className="notif-title">{n.title}</div>
-                        <div className="notif-desc">{n.message}</div>
-                        <div className="notif-time">{new Date(n.createdAt).toLocaleTimeString()}</div>
+                        <div className="notification-title">{n.title}</div>
+                        <div className="notification-msg">{n.message}</div>
                       </div>
                     ))
                   )}
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
 
-          {/* User Profile Pill & Logout */}
-          <div className="user-profile-menu">
-            <span className="user-avatar">{user.role === 'seller' ? '👨‍🎓' : '👩‍🎓'}</span>
-            <span className="user-display-name">{user.name}</span>
-            <button className="btn-logout" onClick={onLogout} title="Log out">
-              Exit
+            {/* User Profile Avatar */}
+            <div style={{ position: 'relative' }}>
+              <button
+                className="user-avatar-btn"
+                onClick={() => setShowUserMenu(!showUserMenu)}
+                title={user.name}
+              >
+                {initial}
+              </button>
+
+              {showUserMenu && (
+                <div className="user-menu-dropdown">
+                  <div className="user-menu-header">
+                    <div className="user-menu-name">{user.name}</div>
+                    <div className="user-menu-email">{user.email}</div>
+                    <div className={`user-role-badge ${user.role}`}>
+                      {user.role === 'seller' ? `Seller · Sem ${user.sem}` : `Buyer · Sem ${user.sem}`}
+                    </div>
+                  </div>
+
+                  <button className="user-menu-item" onClick={() => onSelectTab('listings')}>
+                    🛍️ Browse Listings
+                  </button>
+                  <button className="user-menu-item" onClick={() => onSelectTab('my_bids')}>
+                    🏷️ My Bids & Activity
+                  </button>
+                  {user.role === 'seller' && (
+                    <button className="user-menu-item" onClick={() => onSelectTab('sell')}>
+                      📊 Seller Dashboard
+                    </button>
+                  )}
+                  <button className="user-menu-item logout" onClick={onLogout}>
+                    🚪 Sign Out
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Seller Role Guard Alert Modal */}
+      {sellerGuardAlert && (
+        <div className="modal-overlay" onClick={() => setSellerGuardAlert(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">Graduating Seniors Only</h3>
+              <button className="modal-close-btn" onClick={() => setSellerGuardAlert(false)}>×</button>
+            </div>
+            <p style={{ color: '#475569', fontSize: '0.92rem', lineHeight: '1.6', marginBottom: '1.25rem' }}>
+              Per campus auction policy, listing items for sale is reserved for senior graduating students (Semesters 7, 8, and 9).
+              <br /><br />
+              Your registered semester is <strong>Semester {user.sem} (Buyer role)</strong>. As a registered buyer, you can browse, track, and bid on all campus auctions!
+            </p>
+            <button className="btn-primary-dark" onClick={() => setSellerGuardAlert(false)}>
+              Back to Browse
             </button>
           </div>
         </div>
-      </div>
-    </header>
+      )}
+    </>
   );
 };

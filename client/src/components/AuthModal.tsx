@@ -1,318 +1,431 @@
-import React, { useState } from 'react';
-import type { User, UserRole } from '../types';
+import React, { useState, useEffect } from 'react';
+import type { User } from '../types';
 
 interface AuthModalProps {
   onSuccess: (user: User, token: string) => void;
-  showToast: (type: 'info' | 'success' | 'warning' | 'error', title: string, message: string) => void;
 }
 
-export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess, showToast }) => {
-  const [step, setStep] = useState<'email' | 'set_password' | 'enter_password'>('email');
+export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
+  const [mode, setMode] = useState<'signin' | 'signup' | 'set_password'>('signin');
   const [email, setEmail] = useState('');
-  const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [detectedRole, setDetectedRole] = useState<UserRole | null>(null);
-  const [detectedSem, setDetectedSem] = useState<number | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [name, setName] = useState('');
+
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Sample roster hints for quick 1-click testing
-  const demoAccounts = [
-    { email: 'seller.sam@campus.edu', label: 'Sam (Sem 8 · Seller)', role: 'seller' },
-    { email: 'priya.senior@campus.edu', label: 'Priya (Sem 7 · Seller)', role: 'seller' },
-    { email: 'buyer.bob@campus.edu', label: 'Bob (Sem 4 · Buyer)', role: 'buyer' },
-    { email: 'arun.buyer@campus.edu', label: 'Arun (Sem 2 · Buyer)', role: 'buyer' },
-    { email: 'unassigned.student@campus.edu', label: 'Test Blank Sem (Error)', role: 'error' },
-  ];
+  // Quick test roster accounts from server
+  const [rosterHints, setRosterHints] = useState<any[]>([]);
 
-  const handleCheckEmail = async (overrideEmail?: string) => {
-    const targetEmail = (overrideEmail || email).trim().toLowerCase();
-    if (!targetEmail) {
-      setErrorMsg('Please enter your college email');
+  useEffect(() => {
+    fetch('/api/auth/roster-hint')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.ok && Array.isArray(data.roster)) {
+          setRosterHints(data.roster);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleSelectQuickAccount = (r: any) => {
+    setEmail(r.email);
+    setPassword('password123');
+    setError(null);
+    setSuccessMsg(null);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccessMsg(null);
+
+    const normEmail = email.trim().toLowerCase();
+    if (!normEmail) {
+      setError('Please enter your college email');
       return;
     }
-    setErrorMsg('');
+
     setLoading(true);
 
     try {
-      const res = await fetch('/api/auth/check-email', {
+      // Step 1: Check College Email in authorizedStudents Roster
+      const checkRes = await fetch('/api/auth/check-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: targetEmail }),
+        body: JSON.stringify({ email: normEmail }),
       });
+      const checkData = await checkRes.json();
 
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        setErrorMsg(data.error || "Your email isn't registered with the campus list");
+      if (!checkRes.ok) {
+        setError(checkData.error || "Your email isn't registered with the campus list");
+        setLoading(false);
         return;
       }
 
-      setEmail(data.email);
-      setName(data.name || '');
-      setDetectedRole(data.role);
-      setDetectedSem(data.sem);
+      // If user has no password yet, route to password creation
+      if (!checkData.hasPassword) {
+        setName(checkData.name || '');
+        setMode('set_password');
+        setSuccessMsg(`Welcome ${checkData.name || 'Student'} (${checkData.role.toUpperCase()} · Sem ${checkData.sem})! Please set your new password.`);
+        setLoading(false);
+        return;
+      }
 
-      if (data.hasPassword) {
-        setStep('enter_password');
-        showToast('info', 'Welcome Back!', `Role: ${data.role.toUpperCase()} (Sem ${data.sem})`);
-      } else {
-        setStep('set_password');
-        showToast('info', 'First Time Login', `Please create a secure password for your account.`);
+      // If in sign-in mode and has password, submit login
+      if (mode === 'signin' || mode === 'signup') {
+        if (!password) {
+          setError('Please enter your password');
+          setLoading(false);
+          return;
+        }
+
+        const loginRes = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: normEmail, password }),
+        });
+        const loginData = await loginRes.json();
+
+        if (!loginRes.ok) {
+          setError(loginData.error || 'Incorrect password');
+          setLoading(false);
+          return;
+        }
+
+        onSuccess(loginData.user, loginData.token);
       }
     } catch (err: any) {
-      setErrorMsg(err.message || 'Network error');
+      setError(err.message || 'Authentication error');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSetPassword = async (e: React.FormEvent) => {
+  const handleSetPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+
+    if (!password || !confirmPassword) {
+      setError('Please fill in both password fields');
+      return;
+    }
     if (password !== confirmPassword) {
-      setErrorMsg('Passwords do not match');
+      setError('Passwords do not match');
       return;
     }
     if (password.length < 6) {
-      setErrorMsg('Password must be at least 6 characters');
+      setError('Password must be at least 6 characters');
       return;
     }
-    setErrorMsg('');
-    setLoading(true);
 
+    setLoading(true);
     try {
       const res = await fetch('/api/auth/set-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, confirmPassword, name }),
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          password,
+          confirmPassword,
+          name,
+        }),
       });
-
       const data = await res.json();
-      if (!res.ok || !data.ok) {
-        setErrorMsg(data.error || 'Failed to set password');
+
+      if (!res.ok) {
+        setError(data.error || 'Failed to create password');
+        setLoading(false);
         return;
       }
 
-      showToast('success', 'Password Created!', 'Please enter your password to log in.');
-      setPassword('');
-      setConfirmPassword('');
-      setStep('enter_password');
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Network error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!password) {
-      setErrorMsg('Password is required');
-      return;
-    }
-    setErrorMsg('');
-    setLoading(true);
-
-    try {
-      const res = await fetch('/api/auth/login', {
+      // Automatically log the student in after creating password
+      const loginRes = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
       });
+      const loginData = await loginRes.json();
 
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        setErrorMsg(data.error || 'Incorrect password');
-        return;
+      if (loginRes.ok) {
+        onSuccess(loginData.user, loginData.token);
+      } else {
+        setMode('signin');
+        setSuccessMsg('Password created! Please sign in with your password.');
       }
-
-      showToast('success', 'Logged In!', `Welcome, ${data.user.name} (${data.user.role.toUpperCase()})`);
-      onSuccess(data.user, data.token);
     } catch (err: any) {
-      setErrorMsg(err.message || 'Network error');
+      setError(err.message || 'Error creating password');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="auth-overlay">
-      <div className="auth-card">
-        {/* Brand Banner */}
-        <div className="auth-header">
-          <div className="auth-logo">🏛️</div>
-          <h2 className="auth-title">CampusBid Portal</h2>
-          <p className="auth-subtitle">Official Student Auction & Marketplace</p>
-        </div>
-
-        {errorMsg && (
-          <div className="auth-error-banner" role="alert">
-            <span>⚠️</span> {errorMsg}
+    <div className="login-screen-wrapper">
+      {/* Left Pane: Split-Screen Hero */}
+      <div className="login-hero-pane">
+        <div className="login-hero-overlay" />
+        <div className="login-hero-content">
+          {/* Logo */}
+          <div className="login-hero-brand">
+            <div className="brand-logo-icon">🎓</div>
+            <h1 className="brand-title">CampusBid</h1>
           </div>
-        )}
 
-        {/* STEP 1: Enter Email */}
-        {step === 'email' && (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleCheckEmail();
-            }}
-            className="auth-form"
-          >
-            <div className="form-group">
-              <label>College Email Address</label>
-              <input
-                type="email"
-                className="form-input"
-                placeholder="student@campus.edu"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoFocus
-              />
-              <span className="auth-hint">
-                Backend checks campus roster. Sem 7-9 assigned as <strong>Seller</strong>; other sems assigned as <strong>Buyer</strong>.
-              </span>
+          {/* Center Heading & Subtitle */}
+          <div className="login-hero-center">
+            <h2 className="login-hero-heading">Buy. Sell. Reuse.</h2>
+            <p className="login-hero-subheading">
+              A student-to-student auction platform for a smarter campus.
+            </p>
+
+            {/* Feature Bullets */}
+            <div className="login-hero-features">
+              <div className="login-feature-item">
+                <span className="login-feature-icon">🛡️</span>
+                <span>Verified Students</span>
+              </div>
+              <div className="login-feature-item">
+                <span className="login-feature-icon">🔒</span>
+                <span>Safe & Secure</span>
+              </div>
+              <div className="login-feature-item">
+                <span className="login-feature-icon">🌱</span>
+                <span>Sustainable Campus</span>
+              </div>
             </div>
+          </div>
 
-            <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
-              {loading ? 'Verifying Roster...' : 'Continue with Campus Email →'}
-            </button>
+          {/* Footer note */}
+          <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+            Built for campus dorms, labs, and student communities.
+          </div>
+        </div>
+      </div>
 
-            {/* Quick Demo Roster Accounts */}
-            <div className="demo-accounts-box">
-              <span className="demo-accounts-label">Demo Roster Accounts (1-Click Test):</span>
-              <div className="demo-chips">
-                {demoAccounts.map((acc) => (
+      {/* Right Pane: Login Form Card */}
+      <div className="login-form-pane">
+        <div className="login-card">
+          <div className="login-header-text">
+            <h2 className="login-title">
+              {mode === 'set_password' ? 'Create Password' : 'Welcome Back'}
+            </h2>
+            <p className="login-subtitle">
+              {mode === 'set_password'
+                ? 'First-time login: please set your password'
+                : 'Sign in to your CampusBid account'}
+            </p>
+          </div>
+
+          {error && <div className="error-banner">⚠️ {error}</div>}
+          {successMsg && <div className="success-banner">✨ {successMsg}</div>}
+
+          {mode === 'set_password' ? (
+            /* Set Password Form */
+            <form onSubmit={handleSetPasswordSubmit}>
+              <div className="form-group">
+                <label className="form-label">College Email</label>
+                <div className="input-with-icon">
+                  <span className="input-icon">✉️</span>
+                  <input
+                    type="email"
+                    className="input-field"
+                    value={email}
+                    disabled
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Create Password</label>
+                <div className="input-with-icon">
+                  <span className="input-icon">🔒</span>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    className="input-field"
+                    placeholder="Enter at least 6 characters"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
                   <button
-                    key={acc.email}
                     type="button"
-                    className="demo-chip"
-                    onClick={() => {
-                      setEmail(acc.email);
-                      handleCheckEmail(acc.email);
-                    }}
+                    className="input-eye-btn"
+                    onClick={() => setShowPassword(!showPassword)}
                   >
-                    {acc.label}
+                    {showPassword ? '👁️' : '👁️‍🗨️'}
                   </button>
-                ))}
+                </div>
               </div>
-            </div>
-          </form>
-        )}
 
-        {/* STEP 2: First Time User - Set Password */}
-        {step === 'set_password' && (
-          <form onSubmit={handleSetPassword} className="auth-form">
-            <div className="role-detected-banner">
-              <div className="role-tag-pill">
-                {detectedRole === 'seller' ? '🎓 Seller Mode' : '🎒 Buyer Mode'}
+              <div className="form-group">
+                <label className="form-label">Re-enter Password</label>
+                <div className="input-with-icon">
+                  <span className="input-icon">🔒</span>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    className="input-field"
+                    placeholder="Confirm your password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    required
+                  />
+                </div>
               </div>
-              <p>
-                <strong>{name || email}</strong> · Semester {detectedSem}
-              </p>
-              <small>No password set yet. Create a password for future logins.</small>
-            </div>
 
-            <div className="form-group">
-              <label>Your Display Name</label>
-              <input
-                type="text"
-                className="form-input"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Sam Wilson"
-                required
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Create Password</label>
-              <input
-                type="password"
-                className="form-input"
-                placeholder="At least 6 characters"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Re-enter Password</label>
-              <input
-                type="password"
-                className="form-input"
-                placeholder="Confirm your password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-              />
-            </div>
-
-            <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
-              {loading ? 'Saving Password...' : 'Save Password & Proceed to Login'}
-            </button>
-
-            <button
-              type="button"
-              className="btn btn-secondary"
-              style={{ width: '100%', marginTop: '0.25rem' }}
-              onClick={() => {
-                setStep('email');
-                setErrorMsg('');
-              }}
-            >
-              ← Use Different Email
-            </button>
-          </form>
-        )}
-
-        {/* STEP 3: Enter Password & Log in */}
-        {step === 'enter_password' && (
-          <form onSubmit={handleLogin} className="auth-form">
-            <div className="role-detected-banner">
-              <div className="role-tag-pill">
-                {detectedRole === 'seller' ? '🎓 Seller Mode' : '🎒 Buyer Mode'}
+              <button
+                type="submit"
+                className="btn-primary-dark"
+                disabled={loading}
+              >
+                {loading ? 'Setting Password...' : 'Save & Log In'}
+              </button>
+            </form>
+          ) : (
+            /* Sign In / Sign Up Form */
+            <form onSubmit={handleSubmit}>
+              <div className="form-group">
+                <label className="form-label">College Email</label>
+                <div className="input-with-icon">
+                  <span className="input-icon">✉️</span>
+                  <input
+                    type="email"
+                    className="input-field"
+                    placeholder="e.g. atchayaa.21alr@kongu.edu"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                  />
+                </div>
               </div>
-              <p>
-                <strong>{name || email}</strong> · Sem {detectedSem}
-              </p>
-              <small>Role verified server-side via authorized campus roster.</small>
+
+              <div className="form-group">
+                <label className="form-label">Password</label>
+                <div className="input-with-icon">
+                  <span className="input-icon">🔒</span>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    className="input-field"
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="input-eye-btn"
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
+                    {showPassword ? '👁️' : '👁️‍🗨️'}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="btn-primary-dark"
+                disabled={loading}
+              >
+                {loading ? 'Checking Roster...' : 'Sign In'}
+              </button>
+
+              <div className="login-divider">
+                <span>or</span>
+              </div>
+
+              <button
+                type="button"
+                className="btn-google"
+                onClick={() => {
+                  if (rosterHints.length > 0) {
+                    handleSelectQuickAccount(rosterHints[0]);
+                  }
+                }}
+              >
+                <svg className="google-icon" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                  />
+                </svg>
+                Continue with Google
+              </button>
+
+              <div className="login-allowed-note">
+                Only college accounts are allowed
+              </div>
+
+              <div className="login-footer-text">
+                Don't have an account?{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (email) handleSubmit({ preventDefault: () => {} } as any);
+                    else setError('Please enter your college email to verify roster authorization');
+                  }}
+                >
+                  Sign Up
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Quick Roster Account Chips for 1-Click Evaluation */}
+          <div className="test-accounts-panel">
+            <div className="test-accounts-title">1-Click Test Accounts from Roster:</div>
+            <div className="test-chips">
+              <button
+                type="button"
+                className="test-chip"
+                onClick={() => handleSelectQuickAccount({ email: 'seller.sam@campus.edu' })}
+              >
+                Sam (Seller · Sem 8)
+              </button>
+              <button
+                type="button"
+                className="test-chip"
+                onClick={() => handleSelectQuickAccount({ email: 'buyer.bob@campus.edu' })}
+              >
+                Bob (Buyer · Sem 4)
+              </button>
+              <button
+                type="button"
+                className="test-chip"
+                onClick={() => handleSelectQuickAccount({ email: 'atchayaa.21alr@kongu.edu' })}
+              >
+                Atchaya (Sem 7 Seller)
+              </button>
+              <button
+                type="button"
+                className="test-chip"
+                onClick={() => handleSelectQuickAccount({ email: 'sreesanthc.25mtr@kongu.edu' })}
+              >
+                Sreesanth (Sem 1 Buyer)
+              </button>
+              <button
+                type="button"
+                className="test-chip"
+                onClick={() => handleSelectQuickAccount({ email: 'unassigned.student@campus.edu' })}
+              >
+                Invalid Sem (Contact Admin)
+              </button>
             </div>
-
-            <div className="form-group">
-              <label>Password</label>
-              <input
-                type="password"
-                className="form-input"
-                placeholder="Enter your account password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                autoFocus
-              />
-            </div>
-
-            <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
-              {loading ? 'Authenticating...' : 'Sign In to CampusBid'}
-            </button>
-
-            <button
-              type="button"
-              className="btn btn-secondary"
-              style={{ width: '100%', marginTop: '0.25rem' }}
-              onClick={() => {
-                setStep('email');
-                setErrorMsg('');
-                setPassword('');
-              }}
-            >
-              ← Switch Email
-            </button>
-          </form>
-        )}
+          </div>
+        </div>
       </div>
     </div>
   );

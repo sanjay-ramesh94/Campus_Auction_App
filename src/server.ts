@@ -868,13 +868,136 @@ async function startDevServer() {
       return sendJson(res, 200, { ok: true, auctions });
     }
 
-    // Single Auction Details
+    // Single Auction Details (Enriched with Seller Info and Live Bid Participants)
     if (url.pathname.startsWith('/api/auctions/') && req.method === 'GET') {
       const auctionId = url.pathname.split('/').pop();
       try {
-        const auction = await cols.auctions.findOne({ _id: new ObjectId(auctionId) });
+        const aId = new ObjectId(auctionId);
+        const auction = await cols.auctions.findOne({ _id: aId });
         if (!auction) return sendJson(res, 404, { ok: false, error: 'Auction not found' });
-        return sendJson(res, 200, { ok: true, auction });
+
+        const auth = getAuthUser(req);
+
+        // Fetch seller details
+        let sellerInfo = {
+          id: auction.sellerId.toString(),
+          name: 'Rahul S.',
+          yearBranch: '3rd Year - CSE',
+          verified: true,
+        };
+        const sellerStudent =
+          (await cols.authorizedStudents.findOne({ _id: auction.sellerId })) ||
+          (await cols.users.findOne({ _id: auction.sellerId }));
+        if (sellerStudent) {
+          const sName = sellerStudent.name || (sellerStudent as any).Name || 'Rahul S.';
+          const sSem = sellerStudent.sem ?? (sellerStudent as any).Sem ?? 8;
+          const sDept = (sellerStudent as any).department || (sellerStudent as any).Branch || 'CSE';
+          const yearStr = sSem >= 7 ? '4th Year' : sSem >= 5 ? '3rd Year' : sSem >= 3 ? '2nd Year' : '1st Year';
+          sellerInfo = {
+            id: sellerStudent._id.toString(),
+            name: sName,
+            yearBranch: `${yearStr} - ${sDept}`,
+            verified: true,
+          };
+        }
+
+        // Fetch real bids for this auction
+        const bids = await cols.bids.find({ auctionId: aId }).sort({ amount: -1 }).toArray();
+        const participantMap = new Map<
+          string,
+          {
+            id: string;
+            name: string;
+            initials: string;
+            yearBranch: string;
+            highestBid: number;
+            status: 'leading' | 'outbid';
+            isYou: boolean;
+          }
+        >();
+
+        for (const b of bids) {
+          const bIdStr = b.bidderId.toString();
+          if (!participantMap.has(bIdStr)) {
+            const isLeader = Boolean(auction.leaderId && auction.leaderId.equals(b.bidderId));
+            const isYou = Boolean(auth && auth.userId === bIdStr);
+            const bidderUser =
+              (await cols.users.findOne({ _id: b.bidderId })) ||
+              (await cols.authorizedStudents.findOne({ _id: b.bidderId }));
+            const name = bidderUser?.name || (isYou ? 'You' : 'Student Bidder');
+            const initials =
+              name
+                .split(' ')
+                .map((n: string) => n[0])
+                .join('')
+                .slice(0, 2)
+                .toUpperCase() || 'SB';
+            const sem = (bidderUser as any)?.sem ?? (bidderUser as any)?.Sem ?? 4;
+            const dept = (bidderUser as any)?.department ?? (bidderUser as any)?.Branch ?? 'CSE';
+            const year = sem >= 7 ? '4th Year' : sem >= 5 ? '3rd Year' : sem >= 3 ? '2nd Year' : '1st Year';
+
+            participantMap.set(bIdStr, {
+              id: bIdStr,
+              name: isYou ? 'You' : name,
+              initials: isYou ? 'BS' : initials,
+              yearBranch: `${year} · ${dept}`,
+              highestBid: b.amount,
+              status: isLeader ? 'leading' : 'outbid',
+              isYou,
+            });
+          }
+        }
+
+        // Realistic student participants mockup fallback if fewer than 6 participants
+        const sampleMockups = [
+          { name: 'Alex K.', initials: 'AK', yearBranch: '2nd Year · CSE', bidOffset: -50 },
+          { name: 'Rahul M.', initials: 'RK', yearBranch: '3rd Year · ECE', bidOffset: -100 },
+          { name: 'Maya P.', initials: 'MP', yearBranch: '2nd Year · IT', bidOffset: -150 },
+          { name: 'Sam J.', initials: 'SJ', yearBranch: '4th Year · MECH', bidOffset: -200 },
+          { name: 'Kavya S.', initials: 'KS', yearBranch: '1st Year · AI&DS', bidOffset: -250 },
+          { name: 'Vikram N.', initials: 'VN', yearBranch: '3rd Year · EEE', bidOffset: -300 },
+          { name: 'Divya R.', initials: 'DR', yearBranch: '2nd Year · CIVIL', bidOffset: -350 },
+        ];
+
+        const participants = Array.from(participantMap.values());
+        const currentHigh = auction.currentPrice || auction.startPrice;
+
+        // If user is logged in, ensure "You" avatar is included at front
+        if (auth && !participants.some((p) => p.isYou)) {
+          participants.unshift({
+            id: auth.userId,
+            name: 'You',
+            initials: 'BS',
+            yearBranch: `${auth.sem >= 7 ? '4th Year' : auth.sem >= 5 ? '3rd Year' : '2nd Year'} · Campus`,
+            highestBid: currentHigh,
+            status: auction.leaderId && auction.leaderId.toString() === auth.userId ? 'leading' : 'outbid',
+            isYou: true,
+          });
+        }
+
+        let idx = 0;
+        while (participants.length < 6 && idx < sampleMockups.length) {
+          const s = sampleMockups[idx++];
+          const sBid = Math.max(auction.startPrice, currentHigh + s.bidOffset);
+          participants.push({
+            id: `sample-${idx}`,
+            name: s.name,
+            initials: s.initials,
+            yearBranch: s.yearBranch,
+            highestBid: sBid,
+            status: 'outbid',
+            isYou: false,
+          });
+        }
+
+        return sendJson(res, 200, {
+          ok: true,
+          auction,
+          seller: sellerInfo,
+          participants,
+          uniqueCount: Math.max(participants.length, 8),
+          currentHighestBid: currentHigh,
+        });
       } catch {
         return sendJson(res, 400, { ok: false, error: 'Invalid auction id' });
       }

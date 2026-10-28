@@ -48,6 +48,16 @@ export interface Auction {
   createdAt: string;
 }
 
+export interface LiveBidParticipant {
+  id: string;
+  name: string;
+  initials: string;
+  yearBranch: string;
+  highestBid: number;
+  status: 'leading' | 'outbid';
+  isYou?: boolean;
+}
+
 export interface Bid {
   _id: string;
   auctionId: string;

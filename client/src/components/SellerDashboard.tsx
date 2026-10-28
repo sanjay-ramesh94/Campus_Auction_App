@@ -1,124 +1,146 @@
 import React, { useState, useEffect } from 'react';
-import type { Auction, Bid, Question } from '../types';
+import type { Auction, User } from '../types';
 
 interface SellerDashboardProps {
-  token: string;
-  onOpenCreateModal: () => void;
-  showToast: (type: 'info' | 'success' | 'warning' | 'error', title: string, message: string) => void;
+  user: User;
+  token: string | null;
+  onSelectAuction: (id: string) => void;
+  onShowToast: (type: 'info' | 'success' | 'warning' | 'error', title: string, message: string) => void;
 }
 
 export const SellerDashboard: React.FC<SellerDashboardProps> = ({
+  user,
   token,
-  onOpenCreateModal,
-  showToast,
+  onSelectAuction,
+  onShowToast,
 }) => {
-  const [groupedListings, setGroupedListings] = useState<{
-    active: Auction[];
-    pending_approval: Auction[];
-    reserved: Auction[];
-    sold: Auction[];
-    unsold_closed: Auction[];
-  }>({
-    active: [],
-    pending_approval: [],
-    reserved: [],
-    sold: [],
-    unsold_closed: [],
-  });
-
+  const [sidebarTab, setSidebarTab] = useState<'sell' | 'my_listings' | 'bids_received' | 'sold'>('sell');
+  const [myAuctions, setMyAuctions] = useState<Auction[]>([]);
   const [actionNeeded, setActionNeeded] = useState<Auction[]>([]);
-  const [activeTab, setActiveTab] = useState<'active' | 'pending_approval' | 'reserved' | 'sold' | 'unsold_closed'>('active');
-  const [selectedAuction, setSelectedAuction] = useState<Auction | null>(null);
-  const [selectedBids, setSelectedBids] = useState<Bid[]>([]);
-  const [selectedQuestions, setSelectedQuestions] = useState<Question[]>([]);
-  const [answerInput, setAnswerInput] = useState<{ [qId: string]: string }>({});
-  const [rejectReason, setRejectReason] = useState<string>('');
-  const [showRejectModal, setShowRejectModal] = useState<boolean>(false);
-  const [showEditModal, setShowEditModal] = useState<boolean>(false);
-  const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
-  const [cancelReason, setCancelReason] = useState<string>('');
-  const [editForm, setEditForm] = useState({
-    title: '',
-    category: '',
-    condition: '',
-    description: '',
-    startPrice: 0,
-    maxPrice: 0,
-    minIncrement: 0,
-  });
 
-  const fetchListings = async () => {
+  // Create Listing Form state
+  const [title, setTitle] = useState('');
+  const [category, setCategory] = useState('Electronics');
+  const [description, setDescription] = useState('');
+  const [condition, setCondition] = useState('Good Condition');
+  const [startPrice, setStartPrice] = useState<number>(500);
+  const [minIncrement, setMinIncrement] = useState<number>(50);
+  const [duration, setDuration] = useState('1 Day');
+  const [imageUrl, setImageUrl] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  // Close Action modal (Approve / Reject)
+  const [closingModalAuction, setClosingModalAuction] = useState<Auction | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  // Handover modal
+  const [handoverModalAuction, setHandoverModalAuction] = useState<Auction | null>(null);
+
+  const fetchSellerListings = async () => {
+    if (!token) return;
     try {
       const res = await fetch('/api/seller/listings', {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (data.ok) {
-        setGroupedListings(data.grouped);
-        setActionNeeded(data.actionNeeded);
-        if (selectedAuction) {
-          const fresh = data.listings.find((l: Auction) => l._id === selectedAuction._id);
-          if (fresh) setSelectedAuction(fresh);
-        }
+        setMyAuctions(data.all || []);
+        setActionNeeded(data.actionNeeded || []);
       }
-    } catch (err) {
-      console.error(err);
-    }
+    } catch {}
   };
 
   useEffect(() => {
-    fetchListings();
-    const interval = setInterval(fetchListings, 4000);
+    fetchSellerListings();
+    const interval = setInterval(fetchSellerListings, 6000);
     return () => clearInterval(interval);
   }, [token]);
 
-  // Load bids & questions when selected auction changes
-  useEffect(() => {
-    if (!selectedAuction) return;
+  const handleCreateListing = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title.trim() || !category || startPrice <= 0 || minIncrement <= 0) {
+      onShowToast('warning', 'Validation Error', 'Please fill in all listing details with valid numbers');
+      return;
+    }
 
-    fetch(`/api/bids?auctionId=${selectedAuction._id}`)
-      .then((r) => r.json())
-      .then((d) => d.ok && setSelectedBids(d.bids || []))
-      .catch(console.error);
+    setCreating(true);
 
-    fetch(`/api/questions?auctionId=${selectedAuction._id}`)
-      .then((r) => r.json())
-      .then((d) => d.ok && setSelectedQuestions(d.questions || []))
-      .catch(console.error);
-  }, [selectedAuction?._id, selectedAuction?.version]);
+    let hours = 24;
+    if (duration === '3 Days') hours = 72;
+    else if (duration === '7 Days') hours = 168;
 
-  // Handle Approve / Reject
-  const handleCloseAction = async (auctionId: string, decision: 'approved' | 'rejected', reason?: string) => {
+    const closesAt = new Date(Date.now() + hours * 3600 * 1000).toISOString();
+
+    const sampleImages = [
+      imageUrl.trim() || 'https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=800&q=80',
+    ];
+
     try {
-      const res = await fetch(`/api/seller/auctions/${auctionId}/close-action`, {
+      const res = await fetch('/api/seller/listings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ decision, reason }),
+        body: JSON.stringify({
+          title: title.trim(),
+          category,
+          description: description.trim(),
+          condition,
+          startPrice,
+          maxPrice: startPrice * 5,
+          minIncrement,
+          closesAt,
+          images: sampleImages,
+        }),
       });
+
       const data = await res.json();
-      if (data.ok) {
-        showToast(
-          decision === 'approved' ? 'success' : 'info',
-          decision === 'approved' ? 'Listing Approved!' : 'Outcome Rejected',
-          data.message
-        );
-        setShowRejectModal(false);
-        fetchListings();
+      if (res.ok && data.ok) {
+        onShowToast('success', 'Listing Created! 🎉', `"${title}" is now live for bidding`);
+        setTitle('');
+        setDescription('');
+        setStartPrice(500);
+        setMinIncrement(50);
+        setImageUrl('');
+        setSidebarTab('my_listings');
+        fetchSellerListings();
       } else {
-        showToast('error', 'Action Failed', data.error);
+        onShowToast('error', 'Error', data.error || 'Failed to create listing');
       }
-    } catch (err: any) {
-      showToast('error', 'Error', err.message);
+    } catch {
+      onShowToast('error', 'Error', 'Network connection failed');
+    } finally {
+      setCreating(false);
     }
   };
 
-  // Handle Handover confirmation
-  const handleHandover = async (auctionId: string, status: 'confirmed' | 'failed') => {
+  const handleApproveReject = async (decision: 'approved' | 'rejected') => {
+    if (!closingModalAuction) return;
     try {
-      const res = await fetch(`/api/seller/auctions/${auctionId}/handover`, {
+      const res = await fetch(`/api/seller/auctions/${closingModalAuction._id}/close-action`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ decision, reason: rejectReason }),
+      });
+      if (res.ok) {
+        onShowToast('success', 'Decision Saved', `Auction is now ${decision === 'approved' ? 'Reserved' : 'Closed'}`);
+        setClosingModalAuction(null);
+        setRejectReason('');
+        fetchSellerListings();
+      }
+    } catch {
+      onShowToast('error', 'Error', 'Failed to save decision');
+    }
+  };
+
+  const handleHandover = async (status: 'confirmed' | 'failed') => {
+    if (!handoverModalAuction) return;
+    try {
+      const res = await fetch(`/api/seller/auctions/${handoverModalAuction._id}/handover`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -126,562 +148,357 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
         },
         body: JSON.stringify({ status }),
       });
-      const data = await res.json();
-      if (data.ok) {
-        showToast(
-          status === 'confirmed' ? 'success' : 'warning',
-          status === 'confirmed' ? 'Handover Confirmed!' : 'Pickup Failed',
-          data.message
-        );
-        fetchListings();
-      } else {
-        showToast('error', 'Failed', data.error);
+      if (res.ok) {
+        onShowToast('success', 'Handover Recorded', `Status updated to ${status === 'confirmed' ? 'Sold' : 'Pickup Failed'}`);
+        setHandoverModalAuction(null);
+        fetchSellerListings();
       }
-    } catch (err: any) {
-      showToast('error', 'Error', err.message);
+    } catch {
+      onShowToast('error', 'Error', 'Failed to record handover');
     }
   };
-
-  // Answer Q&A question
-  const handleAnswerQuestion = async (qId: string) => {
-    const text = answerInput[qId];
-    if (!text || text.trim().length === 0) return;
-
-    try {
-      const res = await fetch(`/api/seller/questions/${qId}/answer`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ answer: text.trim() }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        showToast('success', 'Answer Submitted', 'Buyer has been notified.');
-        setAnswerInput((prev) => ({ ...prev, [qId]: '' }));
-        if (selectedAuction) {
-          const freshQ = await fetch(`/api/questions?auctionId=${selectedAuction._id}`).then((r) => r.json());
-          if (freshQ.ok) setSelectedQuestions(freshQ.questions);
-        }
-      } else {
-        showToast('error', 'Error', data.error);
-      }
-    } catch (err: any) {
-      showToast('error', 'Error', err.message);
-    }
-  };
-
-  // Open Edit Modal
-  const openEdit = (a: Auction) => {
-    setEditForm({
-      title: a.title,
-      category: a.category,
-      condition: a.condition,
-      description: a.description,
-      startPrice: a.startPrice,
-      maxPrice: a.maxPrice,
-      minIncrement: a.minIncrement,
-    });
-    setShowEditModal(true);
-  };
-
-  // Save Edit
-  const handleSaveEdit = async () => {
-    if (!selectedAuction) return;
-    try {
-      const res = await fetch(`/api/seller/auctions/${selectedAuction._id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(editForm),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        showToast('success', 'Listing Updated', 'Changes applied successfully.');
-        setShowEditModal(false);
-        fetchListings();
-      } else {
-        showToast('error', 'Update Failed', data.error);
-      }
-    } catch (err: any) {
-      showToast('error', 'Error', err.message);
-    }
-  };
-
-  // Cancel Auction
-  const handleCancelAuction = async () => {
-    if (!selectedAuction) return;
-    try {
-      const res = await fetch(`/api/seller/auctions/${selectedAuction._id}/cancel`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ reason: cancelReason }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        showToast('info', 'Listing Cancelled', 'Auction has been marked as cancelled.');
-        setShowCancelModal(false);
-        setCancelReason('');
-        fetchListings();
-      } else {
-        showToast('error', 'Cancellation Failed', data.error);
-      }
-    } catch (err: any) {
-      showToast('error', 'Error', err.message);
-    }
-  };
-
-  const currentTabList = groupedListings[activeTab] || [];
 
   return (
-    <div className="seller-dashboard">
-      {/* 1. Action Needed Highlight Banner */}
-      {actionNeeded.length > 0 && (
-        <div className="action-needed-section">
-          <div className="action-needed-header">
-            <span>⚡ Action Required ({actionNeeded.length} Listing{actionNeeded.length > 1 ? 's' : ''})</span>
-          </div>
-          <div className="action-cards-grid">
-            {actionNeeded.map((item) => (
-              <div key={item._id} className="action-card">
-                <div className="action-card-top">
-                  <span className="badge-warning">
-                    {item.status === 'pending_approval' ? '⏳ Pending Approval' : '🤝 Handover Ready'}
-                  </span>
-                  <span className="price-tag">Winning Bid: ₹{item.currentPrice?.toLocaleString()}</span>
-                </div>
-                <h4 className="action-card-title">{item.title}</h4>
-                <p className="action-card-desc">
-                  {item.status === 'pending_approval'
-                    ? `Auction ended with top bid ₹${item.currentPrice}. Choose to approve or reject.`
-                    : `Winning bid approved! Meet the buyer on campus to handover and mark as Sold.`}
+    <div className="app-body-container">
+      <div className="seller-layout">
+        {/* Left Sidebar matching Screen 4 */}
+        <aside className="seller-sidebar">
+          <button
+            className={`seller-menu-btn ${sidebarTab === 'sell' ? 'active' : ''}`}
+            onClick={() => setSidebarTab('sell')}
+          >
+            <span>🏷️</span>
+            <span>Sell Item</span>
+          </button>
+          <button
+            className={`seller-menu-btn ${sidebarTab === 'my_listings' ? 'active' : ''}`}
+            onClick={() => setSidebarTab('my_listings')}
+          >
+            <span>📋</span>
+            <span>My Listings ({myAuctions.length})</span>
+          </button>
+          <button
+            className={`seller-menu-btn ${sidebarTab === 'bids_received' ? 'active' : ''}`}
+            onClick={() => setSidebarTab('bids_received')}
+          >
+            <span>🔨</span>
+            <span>Bids Received {actionNeeded.length > 0 && `(${actionNeeded.length})`}</span>
+          </button>
+          <button
+            className={`seller-menu-btn ${sidebarTab === 'sold' ? 'active' : ''}`}
+            onClick={() => setSidebarTab('sold')}
+          >
+            <span>🤝</span>
+            <span>Sold Items</span>
+          </button>
+        </aside>
+
+        {/* Main Content Area */}
+        <main>
+          {sidebarTab === 'sell' ? (
+            /* Screen 4: Create a New Listing Form */
+            <div className="seller-content-card">
+              <div style={{ marginBottom: '1.75rem' }}>
+                <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', fontWeight: 700 }}>
+                  Create a New Listing
+                </h2>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem' }}>
+                  Fill in the details to list your item for auction (Seller: {user.name}).
                 </p>
-
-                <div className="action-card-btns">
-                  {item.status === 'pending_approval' ? (
-                    <>
-                      <button
-                        className="btn btn-action"
-                        style={{ padding: '0.45rem 1rem', fontSize: '0.8rem' }}
-                        onClick={() => handleCloseAction(item._id, 'approved')}
-                      >
-                        ✓ Approve Bid
-                      </button>
-                      <button
-                        className="btn btn-secondary"
-                        style={{ padding: '0.45rem 0.85rem', fontSize: '0.8rem', color: '#f43f5e' }}
-                        onClick={() => {
-                          setSelectedAuction(item);
-                          setShowRejectModal(true);
-                        }}
-                      >
-                        ✕ Reject
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        className="btn btn-action"
-                        style={{ padding: '0.45rem 1rem', fontSize: '0.8rem' }}
-                        onClick={() => handleHandover(item._id, 'confirmed')}
-                      >
-                        🤝 Confirm Handover
-                      </button>
-                      <button
-                        className="btn btn-secondary"
-                        style={{ padding: '0.45rem 0.85rem', fontSize: '0.8rem', color: '#f43f5e' }}
-                        onClick={() => handleHandover(item._id, 'failed')}
-                      >
-                        Pickup Failed
-                      </button>
-                    </>
-                  )}
-                  <button
-                    className="btn btn-secondary"
-                    style={{ padding: '0.45rem 0.75rem', fontSize: '0.8rem', marginLeft: 'auto' }}
-                    onClick={() => setSelectedAuction(item)}
-                  >
-                    View Details →
-                  </button>
-                </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
 
-      {/* 2. My Listings Section */}
-      <div className="dashboard-grid">
-        {/* Left Column: Listings & Status Tabs */}
-        <div className="seller-left-col">
-          <div className="seller-tabs-bar">
-            <button
-              className={`seller-tab ${activeTab === 'active' ? 'active' : ''}`}
-              onClick={() => setActiveTab('active')}
-            >
-              Active ({groupedListings.active.length})
-            </button>
-            <button
-              className={`seller-tab ${activeTab === 'pending_approval' ? 'active' : ''}`}
-              onClick={() => setActiveTab('pending_approval')}
-            >
-              Pending Approval ({groupedListings.pending_approval.length})
-            </button>
-            <button
-              className={`seller-tab ${activeTab === 'reserved' ? 'active' : ''}`}
-              onClick={() => setActiveTab('reserved')}
-            >
-              Reserved ({groupedListings.reserved.length})
-            </button>
-            <button
-              className={`seller-tab ${activeTab === 'sold' ? 'active' : ''}`}
-              onClick={() => setActiveTab('sold')}
-            >
-              Sold ({groupedListings.sold.length})
-            </button>
-            <button
-              className={`seller-tab ${activeTab === 'unsold_closed' ? 'active' : ''}`}
-              onClick={() => setActiveTab('unsold_closed')}
-            >
-              Unsold / Closed ({groupedListings.unsold_closed.length})
-            </button>
-          </div>
-
-          <div className="seller-listings-list">
-            {currentTabList.length === 0 ? (
-              <div className="empty-box">
-                <p>No listings in this category.</p>
-                {activeTab === 'active' && (
-                  <button className="btn btn-primary" style={{ marginTop: '0.5rem' }} onClick={onOpenCreateModal}>
-                    + Create Your First Listing
-                  </button>
-                )}
-              </div>
-            ) : (
-              currentTabList.map((item) => (
-                <div
-                  key={item._id}
-                  className={`seller-listing-item ${selectedAuction?._id === item._id ? 'selected' : ''}`}
-                  onClick={() => setSelectedAuction(item)}
-                >
-                  <div className="item-main">
-                    <span className="item-cat">{item.category}</span>
-                    <h4 className="item-title">{item.title}</h4>
-                    <span className="item-desc">{item.description}</span>
+              <form onSubmit={handleCreateListing}>
+                {/* 2-Column: Title & Category */}
+                <div className="form-grid-2" style={{ marginBottom: '1.25rem' }}>
+                  <div>
+                    <label className="form-label">Item Title</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      style={{ paddingLeft: '1rem' }}
+                      placeholder="e.g. Mechanical Keyboard"
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      required
+                    />
                   </div>
-
-                  <div className="item-meta">
-                    <div className="item-price">
-                      {item.currentPrice ? `₹${item.currentPrice.toLocaleString()}` : `Start: ₹${item.startPrice}`}
-                    </div>
-                    <div className="item-bids">{item.bidCount} bid{item.bidCount === 1 ? '' : 's'}</div>
-                    <div className="item-status-pill">{item.status.replace('_', ' ').toUpperCase()}</div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Right Column: Own Auction Inspection Page */}
-        <div className="seller-right-col">
-          {selectedAuction ? (
-            <div className="own-auction-panel">
-              <div className="panel-header-row">
-                <div>
-                  <span className="card-category">{selectedAuction.category}</span>
-                  <h3 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#f8fafc', marginTop: '0.25rem' }}>
-                    {selectedAuction.title}
-                  </h3>
-                </div>
-
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button
-                    className="btn btn-secondary"
-                    style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem' }}
-                    onClick={() => openEdit(selectedAuction)}
-                  >
-                    ✏️ Edit
-                  </button>
-                  {selectedAuction.status === 'active' && (
-                    <button
-                      className="btn btn-secondary"
-                      style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem', color: '#f43f5e' }}
-                      onClick={() => setShowCancelModal(true)}
+                  <div>
+                    <label className="form-label">Category</label>
+                    <select
+                      className="select-field"
+                      value={category}
+                      onChange={(e) => setCategory(e.target.value)}
                     >
-                      ✕ Cancel
-                    </button>
+                      <option value="Electronics">Electronics</option>
+                      <option value="Bicycles">Bicycles</option>
+                      <option value="Furniture">Furniture</option>
+                      <option value="Books">Books</option>
+                      <option value="Hostel Essentials">Hostel Essentials</option>
+                      <option value="Others">Others</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Description Textarea */}
+                <div style={{ marginBottom: '1.25rem' }}>
+                  <label className="form-label">Description</label>
+                  <textarea
+                    className="textarea-field"
+                    placeholder="Add item details, condition, accessories included..."
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    required
+                  />
+                </div>
+
+                {/* 2-Column: Starting Price & Minimum Increment */}
+                <div className="form-grid-2" style={{ marginBottom: '1.25rem' }}>
+                  <div>
+                    <label className="form-label">Starting Price (₹)</label>
+                    <input
+                      type="number"
+                      className="input-field"
+                      style={{ paddingLeft: '1rem' }}
+                      placeholder="e.g. 500"
+                      value={startPrice}
+                      onChange={(e) => setStartPrice(Number(e.target.value))}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="form-label">Minimum Increment (₹)</label>
+                    <input
+                      type="number"
+                      className="input-field"
+                      style={{ paddingLeft: '1rem' }}
+                      placeholder="e.g. 50"
+                      value={minIncrement}
+                      onChange={(e) => setMinIncrement(Number(e.target.value))}
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* 2-Column: Auction Duration & Condition */}
+                <div className="form-grid-2" style={{ marginBottom: '1.25rem' }}>
+                  <div>
+                    <label className="form-label">Auction Duration</label>
+                    <select
+                      className="select-field"
+                      value={duration}
+                      onChange={(e) => setDuration(e.target.value)}
+                    >
+                      <option value="1 Day">1 Day (24 Hours)</option>
+                      <option value="3 Days">3 Days</option>
+                      <option value="7 Days">7 Days</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="form-label">Condition</label>
+                    <select
+                      className="select-field"
+                      value={condition}
+                      onChange={(e) => setCondition(e.target.value)}
+                    >
+                      <option value="Good Condition">Good Condition</option>
+                      <option value="Like New">Like New</option>
+                      <option value="Fair">Fair / Refurbished</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Upload Images Drag-and-Drop / URL */}
+                <div style={{ marginBottom: '1.75rem' }}>
+                  <label className="form-label">Upload Images (Max 5)</label>
+                  <div
+                    className="image-upload-box"
+                    onClick={() => {
+                      const sample = prompt('Enter image URL or press OK to use high-res product photo:', 'https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=800&q=80');
+                      if (sample) setImageUrl(sample);
+                    }}
+                  >
+                    <div className="upload-icon">☁️</div>
+                    <div className="upload-text-main">Click to upload or drag and drop</div>
+                    <div className="upload-text-sub">PNG, JPG (Max 5MB each)</div>
+                  </div>
+                  {imageUrl && (
+                    <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#059669' }}>
+                      ✓ Image attached: {imageUrl.slice(0, 50)}...
+                    </div>
                   )}
                 </div>
-              </div>
 
-              {/* Notice that Sellers cannot bid */}
-              <div className="seller-readonly-notice">
-                <span>🛡️ Seller Mode Active:</span> Bidding controls are hidden. Sellers cannot bid on items.
-              </div>
-
-              {/* Stats Bar */}
-              <div className="price-display-bar" style={{ marginTop: '0.5rem' }}>
-                <div className="price-box">
-                  <span className="price-box-label">Current High</span>
-                  <span className="price-box-val green">
-                    ₹{(selectedAuction.currentPrice || selectedAuction.startPrice).toLocaleString()}
-                  </span>
-                  <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                    {selectedAuction.leaderId ? `Leader: ${selectedAuction.leaderId.slice(-4)}` : 'No bids yet'}
-                  </span>
-                </div>
-
-                <div className="price-box">
-                  <span className="price-box-label">Status</span>
-                  <span className="price-box-val" style={{ textTransform: 'capitalize', fontSize: '1.25rem' }}>
-                    {selectedAuction.status.replace('_', ' ')}
-                  </span>
-                  <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                    {selectedAuction.bidCount} bid{selectedAuction.bidCount === 1 ? '' : 's'} placed
-                  </span>
-                </div>
-
-                <div className="price-box">
-                  <span className="price-box-label">Closing Target</span>
-                  <span className="price-box-val timer" style={{ fontSize: '1.15rem' }}>
-                    {new Date(selectedAuction.closesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                  <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                    {new Date(selectedAuction.closesAt).toLocaleDateString()}
-                  </span>
-                </div>
-              </div>
-
-              {/* Q&A Section */}
-              <div className="qa-seller-section">
-                <div className="section-subheading">
-                  Buyer Q&A ({selectedQuestions.length} Question{selectedQuestions.length === 1 ? '' : 's'})
-                </div>
-
-                {selectedQuestions.length === 0 ? (
-                  <p style={{ fontSize: '0.8rem', color: '#64748b' }}>No questions received from buyers yet.</p>
-                ) : (
-                  <div className="qa-list">
-                    {selectedQuestions.map((q) => (
-                      <div key={q._id} className="qa-item">
-                        <div className="qa-question-line">
-                          <strong>Q:</strong> {q.text}
-                          <span className="qa-asker">by {q.askerName || 'Buyer'}</span>
+                {/* Submit Button */}
+                <button
+                  type="submit"
+                  className="btn-primary-dark"
+                  disabled={creating}
+                >
+                  🏷 List Item
+                </button>
+              </form>
+            </div>
+          ) : (
+            /* My Listings / Action Needed view */
+            <div>
+              {/* Action Needed Card */}
+              {actionNeeded.length > 0 && (
+                <div style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '14px', padding: '1.25rem', marginBottom: '1.5rem' }}>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#92400e', marginBottom: '0.5rem' }}>
+                    ⚡ Action Needed on {actionNeeded.length} Auction(s)
+                  </h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    {actionNeeded.map((a) => (
+                      <div
+                        key={a._id}
+                        style={{ background: '#ffffff', padding: '0.85rem', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                      >
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{a.title}</div>
+                          <div style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                            Winning bid: ₹{a.currentPrice} · Status: {a.status}
+                          </div>
                         </div>
 
-                        {q.answer ? (
-                          <div className="qa-answer-line">
-                            <strong>A:</strong> {q.answer}
-                          </div>
-                        ) : (
-                          <div className="qa-answer-form">
-                            <input
-                              type="text"
-                              className="custom-input"
-                              placeholder="Type answer to buyer..."
-                              value={answerInput[q._id] || ''}
-                              onChange={(e) =>
-                                setAnswerInput((prev) => ({ ...prev, [q._id]: e.target.value }))
-                              }
-                            />
-                            <button
-                              className="btn btn-primary"
-                              style={{ padding: '0.45rem 0.85rem', fontSize: '0.75rem' }}
-                              onClick={() => handleAnswerQuestion(q._id)}
-                            >
-                              Post Answer
-                            </button>
-                          </div>
+                        {a.status === 'pending_approval' && (
+                          <button
+                            className="btn-primary-dark"
+                            style={{ height: '36px', width: 'auto', padding: '0 1rem', background: '#10b981' }}
+                            onClick={() => setClosingModalAuction(a)}
+                          >
+                            Review & Approve
+                          </button>
+                        )}
+
+                        {a.status === 'reserved' && (
+                          <button
+                            className="btn-primary-dark"
+                            style={{ height: '36px', width: 'auto', padding: '0 1rem', background: '#0f172a' }}
+                            onClick={() => setHandoverModalAuction(a)}
+                          >
+                            Confirm Handover
+                          </button>
                         )}
                       </div>
                     ))}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
 
-              {/* Bid Audit Trail */}
-              <div className="audit-section" style={{ marginTop: '0.5rem' }}>
-                <div className="audit-title">Full Bid History ({selectedBids.length})</div>
-                <ul className="audit-list">
-                  {selectedBids.length === 0 ? (
-                    <li style={{ fontSize: '0.8rem', color: '#64748b' }}>No bids recorded yet.</li>
-                  ) : (
-                    selectedBids.map((b, i) => (
-                      <li key={b._id || i} className="audit-item">
-                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                          <span className={`audit-source ${b.source}`}>{b.source}</span>
-                          <span style={{ fontWeight: 700 }}>₹{b.amount.toLocaleString()}</span>
-                          <span style={{ color: '#94a3b8' }}>by Bidder #{b.bidderId.slice(-4)}</span>
+              {/* All Seller Listings */}
+              <div className="bids-list">
+                {myAuctions.map((a) => {
+                  const img = a.images && a.images.length > 0
+                    ? a.images[0]
+                    : 'https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=600&q=80';
+                  return (
+                    <div
+                      key={a._id}
+                      className="bid-row-card"
+                      onClick={() => onSelectAuction(a._id)}
+                    >
+                      <div className="bid-row-left">
+                        <img src={img} alt={a.title} className="bid-row-thumb" />
+                        <div className="bid-row-info">
+                          <div className="bid-row-title">{a.title}</div>
+                          <div className="bid-row-pricing">
+                            <span className="bid-row-cur-bid">Highest Bid: ₹{a.currentPrice || a.startPrice}</span>
+                            <span>·</span>
+                            <span style={{ fontWeight: 600, textTransform: 'capitalize' }}>Status: {a.status}</span>
+                          </div>
                         </div>
-                        <span style={{ fontSize: '0.7rem', color: '#64748b' }}>
-                          {new Date(b.serverTs).toLocaleTimeString()}
-                        </span>
-                      </li>
-                    ))
-                  )}
-                </ul>
-              </div>
-            </div>
-          ) : (
-            <div className="workspace-panel">
-              <div className="workspace-placeholder">
-                <div className="placeholder-emoji">📋</div>
-                <h3>Select a listing to view</h3>
-                <p>Click any item on the left to see questions, approve closing bids, or manage handovers.</p>
+                      </div>
+
+                      <div className="bid-row-right">
+                        <button
+                          className="btn-outline-action"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectAuction(a._id);
+                          }}
+                        >
+                          View Auction
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
-        </div>
+        </main>
       </div>
 
-      {/* Rejection Modal */}
-      {showRejectModal && selectedAuction && (
-        <div className="modal-overlay" onClick={() => setShowRejectModal(false)}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Reject Winning Bid</h3>
-            <p style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
-              Are you sure you want to reject the bid of ₹{selectedAuction.currentPrice}? The listing will be closed.
+      {/* Approve / Reject Modal */}
+      {closingModalAuction && (
+        <div className="modal-overlay" onClick={() => setClosingModalAuction(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">Winning Bid Decision</h3>
+              <button className="modal-close-btn" onClick={() => setClosingModalAuction(null)}>×</button>
+            </div>
+            <p style={{ fontSize: '0.9rem', color: '#475569', marginBottom: '1rem' }}>
+              The auction for <strong>{closingModalAuction.title}</strong> has closed.
+              <br />
+              Winning Bid: <strong>₹{closingModalAuction.currentPrice}</strong>
             </p>
-            <div className="form-group">
-              <label>Reason (Optional)</label>
-              <textarea
-                className="form-textarea"
-                rows={2}
-                placeholder="e.g. Reserve price not reached, item damaged..."
+            <div style={{ marginBottom: '1.25rem' }}>
+              <label className="form-label">Optional rejection reason:</label>
+              <input
+                type="text"
+                className="input-field"
+                placeholder="e.g. Reserve price not reached"
                 value={rejectReason}
                 onChange={(e) => setRejectReason(e.target.value)}
               />
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-              <button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>
-                Cancel
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <button
+                className="btn-primary-dark"
+                style={{ background: '#10b981' }}
+                onClick={() => handleApproveReject('approved')}
+              >
+                ✓ Approve Bid (Reserved)
               </button>
               <button
-                className="btn btn-primary"
-                style={{ background: '#f43f5e' }}
-                onClick={() => handleCloseAction(selectedAuction._id, 'rejected', rejectReason)}
+                className="btn-primary-dark"
+                style={{ background: '#ef4444' }}
+                onClick={() => handleApproveReject('rejected')}
               >
-                Confirm Reject
+                ✕ Reject Bid
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Edit Modal */}
-      {showEditModal && selectedAuction && (
-        <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 700 }}>
-              Edit Listing {selectedAuction.bidCount > 0 && '(Bids Placed: Limited Edit)'}
-            </h3>
-            {selectedAuction.bidCount > 0 ? (
-              <p style={{ fontSize: '0.8rem', color: '#f59e0b' }}>
-                ⚠️ Bids have already been placed! Only description and photos can be modified. Price and title are locked.
-              </p>
-            ) : (
-              <div className="form-group">
-                <label>Title</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={editForm.title}
-                  onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
-                />
-              </div>
-            )}
-
-            <div className="form-group">
-              <label>Description</label>
-              <textarea
-                className="form-textarea"
-                rows={3}
-                value={editForm.description}
-                onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
-              />
+      {/* Handover Modal */}
+      {handoverModalAuction && (
+        <div className="modal-overlay" onClick={() => setHandoverModalAuction(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">Campus Handover Outcome</h3>
+              <button className="modal-close-btn" onClick={() => setHandoverModalAuction(null)}>×</button>
             </div>
-
-            {selectedAuction.bidCount === 0 && (
-              <div className="form-row-3">
-                <div className="form-group">
-                  <label>Start (₹)</label>
-                  <input
-                    type="number"
-                    className="form-input"
-                    value={editForm.startPrice}
-                    onChange={(e) => setEditForm({ ...editForm, startPrice: parseInt(e.target.value, 10) })}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Increment (₹)</label>
-                  <input
-                    type="number"
-                    className="form-input"
-                    value={editForm.minIncrement}
-                    onChange={(e) => setEditForm({ ...editForm, minIncrement: parseInt(e.target.value, 10) })}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Max (₹)</label>
-                  <input
-                    type="number"
-                    className="form-input"
-                    value={editForm.maxPrice}
-                    onChange={(e) => setEditForm({ ...editForm, maxPrice: parseInt(e.target.value, 10) })}
-                  />
-                </div>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
-              <button className="btn btn-secondary" onClick={() => setShowEditModal(false)}>
-                Cancel
-              </button>
-              <button className="btn btn-primary" onClick={handleSaveEdit}>
-                Save Changes
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Cancel Modal */}
-      {showCancelModal && selectedAuction && (
-        <div className="modal-overlay" onClick={() => setShowCancelModal(false)}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#f43f5e' }}>Cancel Listing</h3>
-            <p style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
-              Cancelling will end the auction immediately. Any active bidders will receive a cancellation notification.
+            <p style={{ fontSize: '0.9rem', color: '#475569', marginBottom: '1.25rem' }}>
+              Item: <strong>{handoverModalAuction.title}</strong>
+              <br />
+              Please record the pickup outcome with the student buyer:
             </p>
-            <div className="form-group">
-              <label>Reason for Cancellation *</label>
-              <input
-                type="text"
-                className="form-input"
-                placeholder="e.g. Item no longer available"
-                value={cancelReason}
-                onChange={(e) => setCancelReason(e.target.value)}
-                required
-              />
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-              <button className="btn btn-secondary" onClick={() => setShowCancelModal(false)}>
-                Keep Listing
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <button
+                className="btn-primary-dark"
+                style={{ background: '#10b981' }}
+                onClick={() => handleHandover('confirmed')}
+              >
+                🤝 Handover Successful (Sold)
               </button>
               <button
-                className="btn btn-primary"
-                style={{ background: '#f43f5e' }}
-                disabled={!cancelReason.trim()}
-                onClick={handleCancelAuction}
+                className="btn-primary-dark"
+                style={{ background: '#64748b' }}
+                onClick={() => handleHandover('failed')}
               >
-                Confirm Cancel
+                ⚠️ Pickup Failed
               </button>
             </div>
           </div>

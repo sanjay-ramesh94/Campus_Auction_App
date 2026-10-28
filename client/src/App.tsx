@@ -1,13 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { User, ToastMessage, NotificationItem, Auction } from './types';
+import type { User, ToastMessage, NotificationItem } from './types';
 import { AuthModal } from './components/AuthModal';
 import { Header } from './components/Header';
-import { SellerDashboard } from './components/SellerDashboard';
 import { BuyerHome } from './components/BuyerHome';
+import { LiveAuctionDetail } from './components/LiveAuctionDetail';
+import { SellerDashboard } from './components/SellerDashboard';
 import { MyBidsTab } from './components/MyBidsTab';
-import { WatchlistTab } from './components/WatchlistTab';
 import { AiAssistantTab } from './components/AiAssistantTab';
-import { CreateListingModal } from './components/CreateListingModal';
 import { OnboardingModal } from './components/OnboardingModal';
 import { Toast } from './components/Toast';
 
@@ -21,21 +20,23 @@ export function App() {
     return localStorage.getItem('campus_auction_token');
   });
 
-  const [activeTab, setActiveTab] = useState<string>('browse');
+  const [activeTab, setActiveTab] = useState<string>('listings');
+  const [selectedAuctionId, setSelectedAuctionId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
   const [connected, setConnected] = useState<boolean>(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [unreadCount, setUnreadCount] = useState<number>(0);
+  const [unreadCount, setUnreadCount] = useState<number>(1);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const [isCreateOpen, setIsCreateOpen] = useState<boolean>(false);
   const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
 
-  // Set default tab on login based on role
+  // Default tab on login
   useEffect(() => {
     if (user) {
       if (user.role === 'seller') {
-        setActiveTab('dashboard');
+        setActiveTab('sell');
       } else {
-        setActiveTab('browse');
+        setActiveTab('listings');
       }
     }
   }, [user?.role]);
@@ -61,7 +62,7 @@ export function App() {
       const data = await res.json();
       if (data.ok) {
         setNotifications(data.notifications || []);
-        setUnreadCount(data.unreadCount || 0);
+        setUnreadCount(data.unreadCount !== undefined ? data.unreadCount : 1);
       }
     } catch (err) {
       console.error(err);
@@ -88,7 +89,6 @@ export function App() {
 
         fetchNotifications();
 
-        // Broadcast notifications
         if (event.type === 'DEADLINE_EXTENDED') {
           showToast('warning', '🛡️ Anti-Sniping Protection', 'A bid landed in the final 30s! Deadline extended by +60s.');
         } else if (event.type === 'OUTBID') {
@@ -114,7 +114,12 @@ export function App() {
     localStorage.setItem('campus_auction_user', JSON.stringify(loggedInUser));
     localStorage.setItem('campus_auction_token', authToken);
 
-    // If first time logged in on this browser, show onboarding
+    if (loggedInUser.role === 'seller') {
+      setActiveTab('sell');
+    } else {
+      setActiveTab('listings');
+    }
+
     const seenOnboard = localStorage.getItem(`onboard_${loggedInUser.id}`);
     if (!seenOnboard) {
       setShowOnboarding(true);
@@ -124,6 +129,7 @@ export function App() {
   const handleLogout = () => {
     setUser(null);
     setToken(null);
+    setSelectedAuctionId(null);
     localStorage.removeItem('campus_auction_user');
     localStorage.removeItem('campus_auction_token');
     showToast('info', 'Logged Out', 'You have been signed out successfully.');
@@ -155,32 +161,28 @@ export function App() {
     }
   };
 
-  // Role Guard: Prevents Buyer from opening Seller dashboard and vice-versa
   const handleSelectTab = (tab: string) => {
-    if (!user) return;
-    if (user.role === 'buyer' && (tab === 'dashboard' || tab === 'create')) {
-      showToast('error', 'Access Denied', 'Only Sellers (Semesters 7, 8, 9) have access to Seller Dashboard.');
-      return;
-    }
-    if (user.role === 'seller' && ['my_bids', 'watchlist', 'ai_assistant'].includes(tab)) {
-      showToast('error', 'Sellers Cannot Buy', 'Sellers cannot participate in bidding or set buyer alerts.');
-      return;
-    }
+    setSelectedAuctionId(null);
     setActiveTab(tab);
   };
 
+  const handleSelectAuction = (id: string) => {
+    setSelectedAuctionId(id);
+  };
+
+  // If not logged in, display Screen 1 (Login Page)
   if (!user || !token) {
     return (
-      <div className="app-container">
-        <AuthModal onSuccess={handleLoginSuccess} showToast={showToast} />
+      <>
+        <AuthModal onSuccess={handleLoginSuccess} />
         <Toast toasts={toasts} onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))} />
-      </div>
+      </>
     );
   }
 
   return (
-    <div className="app-container">
-      {/* Role-Aware Header */}
+    <div>
+      {/* Top Dark Header matching Screens 2, 3, 4, 5 */}
       <Header
         user={user}
         activeTab={activeTab}
@@ -190,55 +192,66 @@ export function App() {
         unreadCount={unreadCount}
         onMarkNotificationRead={handleMarkNotificationRead}
         onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
-        onOpenCreateModal={() => setIsCreateOpen(true)}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
         onLogout={handleLogout}
       />
 
-      {/* Main View Router based on Role & Active Tab */}
-      <main className="main-viewport">
-        {user.role === 'seller' ? (
-          /* SELLER FLOW (Sem 7, 8, 9) */
-          <SellerDashboard
+      {/* Main Content Router */}
+      <main>
+        {/* If an auction is selected, render Screen 3 with Image 2 Live Participants */}
+        {selectedAuctionId ? (
+          <LiveAuctionDetail
+            auctionId={selectedAuctionId}
+            user={user}
             token={token}
-            onOpenCreateModal={() => setIsCreateOpen(true)}
-            showToast={showToast}
+            onBackToListings={() => setSelectedAuctionId(null)}
+            onShowToast={showToast}
           />
         ) : (
-          /* BUYER FLOW (Other Sems) */
           <>
-            {activeTab === 'browse' && (
-              <BuyerHome user={user} token={token} showToast={showToast} />
-            )}
-            {activeTab === 'my_bids' && (
-              <MyBidsTab
+            {/* Screen 2: Listings Page */}
+            {(activeTab === 'listings' || activeTab === 'browse') && (
+              <BuyerHome
+                user={user}
                 token={token}
-                onSelectAuction={(_a: Auction) => setActiveTab('browse')}
+                searchQuery={searchQuery}
+                onSelectAuction={handleSelectAuction}
+                onShowToast={showToast}
               />
             )}
-            {activeTab === 'watchlist' && (
-              <WatchlistTab token={token} showToast={showToast} />
+
+            {/* Screen 5: Buyer Dashboard (My Bids) */}
+            {activeTab === 'my_bids' && (
+              <MyBidsTab
+                user={user}
+                token={token}
+                onSelectAuction={handleSelectAuction}
+                onShowToast={showToast}
+              />
             )}
+
+            {/* Screen 4: Seller / Create Listing Page */}
+            {(activeTab === 'sell' || activeTab === 'dashboard') && (
+              <SellerDashboard
+                user={user}
+                token={token}
+                onSelectAuction={handleSelectAuction}
+                onShowToast={showToast}
+              />
+            )}
+
+            {/* AI Assistant Tab */}
             {activeTab === 'ai_assistant' && (
-              <AiAssistantTab token={token} showToast={showToast} />
+              <div className="app-body-container">
+                <AiAssistantTab token={token} showToast={showToast} />
+              </div>
             )}
           </>
         )}
       </main>
 
-      {/* Seller Create Listing Modal */}
-      {user.role === 'seller' && (
-        <CreateListingModal
-          isOpen={isCreateOpen}
-          onClose={() => setIsCreateOpen(false)}
-          token={token}
-          onCreated={() => {
-            setActiveTab('dashboard');
-          }}
-          showToast={showToast}
-        />
-      )}
-
-      {/* Optional One-Time Onboarding Prompt */}
+      {/* One-Time Onboarding Prompt */}
       {showOnboarding && (
         <OnboardingModal
           user={user}
