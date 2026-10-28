@@ -53,9 +53,18 @@ const MIME_TYPES: Record<string, string> = {
   '.json': 'application/json; charset=UTF-8',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
 };
+
+// Ensure uploads folder exists
+const UPLOADS_DIR = path.join(PUBLIC_DIR, 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
 
 function readBody(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -236,6 +245,55 @@ async function startDevServer() {
         sseClients.delete(res);
       });
       return;
+    }
+
+    // 0.1 Local Image Upload Endpoint (saves image locally to public/uploads/)
+    if (url.pathname === '/api/upload' && req.method === 'POST') {
+      const auth = getAuthUser(req);
+      if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized. Please log in.' });
+
+      try {
+        const body = await readBody(req);
+        const data = body.data || body.dataUrl || body.image;
+        const filename = body.filename;
+        if (!data || typeof data !== 'string') {
+          return sendJson(res, 400, { ok: false, error: 'No image data provided' });
+        }
+
+        // Support data URL: "data:image/png;base64,iVBORw0KGgo..."
+        const matches = data.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
+        let ext = 'jpg';
+        let base64Data = data;
+
+        if (matches) {
+          ext = matches[1].toLowerCase();
+          if (ext === 'jpeg') ext = 'jpg';
+          base64Data = matches[2];
+        } else if (filename) {
+          const fileExt = path.extname(filename).replace('.', '').toLowerCase();
+          if (['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(fileExt)) {
+            ext = fileExt === 'jpeg' ? 'jpg' : fileExt;
+          }
+        }
+
+        const buffer = Buffer.from(base64Data, 'base64');
+        if (buffer.length > 10 * 1024 * 1024) {
+          return sendJson(res, 400, { ok: false, error: 'Image exceeds 10MB limit' });
+        }
+
+        if (!fs.existsSync(UPLOADS_DIR)) {
+          fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+        }
+
+        const uniqueName = `item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const targetPath = path.join(UPLOADS_DIR, uniqueName);
+        fs.writeFileSync(targetPath, buffer);
+
+        const fileUrl = `/uploads/${uniqueName}`;
+        return sendJson(res, 200, { ok: true, url: fileUrl, filename: uniqueName });
+      } catch (err: any) {
+        return sendJson(res, 500, { ok: false, error: err.message || 'Failed to save uploaded image' });
+      }
     }
 
     // ==========================================
@@ -482,7 +540,7 @@ async function startDevServer() {
     }
 
     // Create Listing (Seller only)
-    if (url.pathname === '/api/seller/auctions' && req.method === 'POST') {
+    if ((url.pathname === '/api/seller/auctions' || url.pathname === '/api/seller/listings') && req.method === 'POST') {
       const auth = getAuthUser(req);
       if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
       if (auth.role !== 'seller') {

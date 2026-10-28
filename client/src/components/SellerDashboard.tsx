@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { Auction, User } from '../types';
 
 interface SellerDashboardProps {
@@ -26,7 +26,10 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
   const [startPrice, setStartPrice] = useState<number>(500);
   const [minIncrement, setMinIncrement] = useState<number>(50);
   const [duration, setDuration] = useState('1 Day');
-  const [imageUrl, setImageUrl] = useState('');
+  const [images, setImages] = useState<string[]>([]);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
 
   // Close Action modal (Approve / Reject)
@@ -56,6 +59,80 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
     return () => clearInterval(interval);
   }, [token]);
 
+  // Local file upload processor
+  const handleFiles = async (fileList: FileList | File[]) => {
+    const filesArray = Array.from(fileList);
+    if (filesArray.length === 0) return;
+
+    if (images.length + filesArray.length > 5) {
+      onShowToast('warning', 'Limit Reached', 'You can upload a maximum of 5 images per listing');
+    }
+
+    const availableSlots = 5 - images.length;
+    if (availableSlots <= 0) return;
+
+    const filesToUpload = filesArray.slice(0, availableSlots);
+    setUploadingImage(true);
+
+    for (const file of filesToUpload) {
+      if (!file.type.startsWith('image/')) {
+        onShowToast('warning', 'Invalid File', `${file.name} is not an image file`);
+        continue;
+      }
+
+      if (file.size > 8 * 1024 * 1024) {
+        onShowToast('warning', 'File Too Large', `${file.name} exceeds 8MB size limit`);
+        continue;
+      }
+
+      try {
+        const base64Data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+
+        let finalUrl = base64Data;
+        try {
+          const res = await fetch('/api/upload', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              data: base64Data,
+              filename: file.name,
+            }),
+          });
+          const data = await res.json();
+          if (res.ok && data.ok && data.url) {
+            finalUrl = data.url;
+          }
+        } catch {}
+
+        setImages((prev) => [...prev, finalUrl]);
+      } catch {
+        onShowToast('error', 'Upload Error', `Failed to read ${file.name}`);
+      }
+    }
+
+    setUploadingImage(false);
+  };
+
+  const handleRemoveImage = (indexToRemove: number) => {
+    setImages((prev) => prev.filter((_, i) => i !== indexToRemove));
+  };
+
+  const handleSetPrimary = (indexToPrimary: number) => {
+    setImages((prev) => {
+      const copy = [...prev];
+      const [item] = copy.splice(indexToPrimary, 1);
+      return [item, ...copy];
+    });
+  };
+
   const handleCreateListing = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || !category || startPrice <= 0 || minIncrement <= 0) {
@@ -71,9 +148,9 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
 
     const closesAt = new Date(Date.now() + hours * 3600 * 1000).toISOString();
 
-    const sampleImages = [
-      imageUrl.trim() || 'https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=800&q=80',
-    ];
+    const listingImages = images.length > 0
+      ? images
+      : ['https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=800&q=80'];
 
     try {
       const res = await fetch('/api/seller/listings', {
@@ -91,7 +168,7 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
           maxPrice: startPrice * 5,
           minIncrement,
           closesAt,
-          images: sampleImages,
+          images: listingImages,
         }),
       });
 
@@ -102,7 +179,7 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
         setDescription('');
         setStartPrice(500);
         setMinIncrement(50);
-        setImageUrl('');
+        setImages([]);
         setSidebarTab('my_listings');
         fetchSellerListings();
       } else {
@@ -307,23 +384,137 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
                   </div>
                 </div>
 
-                {/* Upload Images Drag-and-Drop / URL */}
+                {/* Local Image Upload (Drag-and-Drop + File Picker) */}
                 <div style={{ marginBottom: '1.75rem' }}>
-                  <label className="form-label">Upload Images (Max 5)</label>
-                  <div
-                    className="image-upload-box"
-                    onClick={() => {
-                      const sample = prompt('Enter image URL or press OK to use high-res product photo:', 'https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=800&q=80');
-                      if (sample) setImageUrl(sample);
-                    }}
-                  >
-                    <div className="upload-icon">☁️</div>
-                    <div className="upload-text-main">Click to upload or drag and drop</div>
-                    <div className="upload-text-sub">PNG, JPG (Max 5MB each)</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                    <label className="form-label" style={{ margin: 0 }}>
+                      Item Photos ({images.length}/5)
+                    </label>
+                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                      PNG, JPG, WEBP (Max 8MB each)
+                    </span>
                   </div>
-                  {imageUrl && (
-                    <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#059669' }}>
-                      ✓ Image attached: {imageUrl.slice(0, 50)}...
+
+                  {/* Hidden Native File Input */}
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept="image/png, image/jpeg, image/jpg, image/webp"
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      if (e.target.files) {
+                        handleFiles(e.target.files);
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+
+                  {images.length === 0 ? (
+                    <div
+                      className={`image-upload-box ${isDragging ? 'drag-over' : ''}`}
+                      onClick={() => fileInputRef.current?.click()}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        setIsDragging(true);
+                      }}
+                      onDragLeave={(e) => {
+                        e.preventDefault();
+                        setIsDragging(false);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        setIsDragging(false);
+                        if (e.dataTransfer.files) {
+                          handleFiles(e.dataTransfer.files);
+                        }
+                      }}
+                    >
+                      <div className="upload-icon">{uploadingImage ? '⏳' : '📷'}</div>
+                      <div className="upload-text-main">
+                        {uploadingImage ? 'Processing local photo...' : 'Click to browse local images or drag & drop'}
+                      </div>
+                      <div className="upload-text-sub">
+                        Select clear photos from your device to display on the auction listing
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="image-preview-grid">
+                        {images.map((imgUrl, idx) => (
+                          <div key={idx} className="image-preview-card">
+                            <img src={imgUrl} alt={`Uploaded ${idx + 1}`} />
+                            {idx === 0 && (
+                              <div className="image-primary-badge">★ Cover</div>
+                            )}
+                            <button
+                              type="button"
+                              className="image-remove-btn"
+                              onClick={() => handleRemoveImage(idx)}
+                              title="Remove photo"
+                            >
+                              ✕
+                            </button>
+                            {idx > 0 && (
+                              <button
+                                type="button"
+                                style={{
+                                  position: 'absolute',
+                                  bottom: '5px',
+                                  left: '5px',
+                                  background: 'rgba(15, 23, 42, 0.75)',
+                                  color: '#cbd5e1',
+                                  border: 'none',
+                                  fontSize: '0.65rem',
+                                  padding: '0.1rem 0.35rem',
+                                  borderRadius: '4px',
+                                  cursor: 'pointer',
+                                }}
+                                onClick={() => handleSetPrimary(idx)}
+                                title="Make this cover photo"
+                              >
+                                Set Cover
+                              </button>
+                            )}
+                          </div>
+                        ))}
+
+                        {images.length < 5 && (
+                          <div
+                            className="image-upload-add-more"
+                            onClick={() => fileInputRef.current?.click()}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              setIsDragging(true);
+                            }}
+                            onDragLeave={(e) => {
+                              e.preventDefault();
+                              setIsDragging(false);
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              setIsDragging(false);
+                              if (e.dataTransfer.files) {
+                                handleFiles(e.dataTransfer.files);
+                              }
+                            }}
+                            title="Add more photos"
+                          >
+                            <span style={{ fontSize: '1.4rem', lineHeight: 1 }}>+</span>
+                            <span>Add Photo</span>
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: '#64748b' }}>
+                        <span>✓ {images.length} photo(s) selected from your device</span>
+                        <button
+                          type="button"
+                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.75rem' }}
+                          onClick={() => setImages([])}
+                        >
+                          Clear all
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
