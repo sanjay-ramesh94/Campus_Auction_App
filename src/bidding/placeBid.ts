@@ -67,7 +67,7 @@ async function executeBidStep(
   if (!a) {
     return { ok: false, reason: 'NOT_FOUND' };
   }
-  if (a.status !== 'active') {
+  if (a.status !== 'active' && a.status !== 'live') {
     return { ok: false, reason: 'NOT_ACTIVE' };
   }
   if (now.getTime() >= a.closesAt.getTime()) {

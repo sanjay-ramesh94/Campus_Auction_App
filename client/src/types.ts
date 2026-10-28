@@ -10,13 +10,24 @@ export interface User {
 }
 
 export type AuctionStatus =
+  | 'live'
   | 'active'
+  | 'closed_sold'
+  | 'closed_unsold'
   | 'pending_approval'
   | 'reserved'
   | 'sold'
   | 'unsold'
   | 'closed'
   | 'cancelled';
+
+export interface BuyerContactDetails {
+  name: string;
+  collegeEmail: string;
+  department: string;
+  year: string;
+  phone: string | null;
+}
 
 export interface Auction {
   _id: string;
@@ -44,6 +55,9 @@ export interface Auction {
   approvalReason?: string;
   handoverStatus?: 'pending' | 'confirmed' | 'failed';
   handoverNotes?: string;
+
+  yourBid?: number;
+  isHighest?: boolean;
 
   createdAt: string;
 }

@@ -31,7 +31,10 @@ export interface User {
 }
 
 export type AuctionStatus =
+  | 'live'
   | 'active'
+  | 'closed_sold'
+  | 'closed_unsold'
   | 'pending_approval'
   | 'reserved'
   | 'sold'
@@ -180,6 +183,8 @@ export interface OutboxEvent {
     | 'QUESTION_ASKED'
     | 'QUESTION_ANSWERED'
     | 'AUCTION_ENDED'
+    | 'AUCTION_WON'
+    | 'AUCTION_LOST'
     | 'AUCTION_APPROVED'
     | 'AUCTION_REJECTED'
     | 'HANDOVER_CONFIRMED'

@@ -87,10 +87,10 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
             {user.role === 'seller' && (
               <button
-                className={`header-tab-btn ${activeTab === 'sell' || activeTab === 'dashboard' ? 'active' : ''}`}
+                className={`header-tab-btn ${activeTab === 'sell' || activeTab === 'seller_panel' || activeTab === 'dashboard' ? 'active' : ''}`}
                 onClick={() => handleTabClick('sell')}
               >
-                Sell
+                Seller Panel
               </button>
             )}
             {user.role !== 'seller' && (
@@ -144,6 +144,38 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
                   </div>
+                  {typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default' && (
+                    <div
+                      style={{
+                        padding: '0.65rem 0.85rem',
+                        background: '#eff6ff',
+                        borderBottom: '1px solid #dbeafe',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        fontSize: '0.78rem',
+                      }}
+                    >
+                      <span style={{ color: '#1e40af', fontWeight: 500 }}>🔔 Enable browser push alerts?</span>
+                      <button
+                        onClick={() => {
+                          Notification.requestPermission().then(() => setShowNotifs(false));
+                        }}
+                        style={{
+                          padding: '0.25rem 0.6rem',
+                          background: '#2563eb',
+                          color: '#fff',
+                          borderRadius: '4px',
+                          border: 'none',
+                          cursor: 'pointer',
+                          fontWeight: 600,
+                          fontSize: '0.75rem',
+                        }}
+                      >
+                        Enable
+                      </button>
+                    </div>
+                  )}
                   {notifications.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: '1.5rem', color: '#94a3b8', fontSize: '0.8rem' }}>
                       No notifications yet

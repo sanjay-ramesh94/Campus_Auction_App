@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import type { Auction, User } from '../types';
+import type { Auction, User, BuyerContactDetails } from '../types';
 
 interface SellerDashboardProps {
   user: User;
@@ -14,9 +14,24 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
   onSelectAuction,
   onShowToast,
 }) => {
-  const [sidebarTab, setSidebarTab] = useState<'sell' | 'my_listings' | 'bids_received' | 'sold'>('sell');
-  const [myAuctions, setMyAuctions] = useState<Auction[]>([]);
-  const [actionNeeded, setActionNeeded] = useState<Auction[]>([]);
+  // Navigation tabs: 'posted' | 'sold' | 'unsold' | 'sell'
+  const [panelTab, setPanelTab] = useState<'posted' | 'sold' | 'unsold' | 'sell'>('posted');
+
+  // Auctions data by status
+  const [postedAuctions, setPostedAuctions] = useState<Auction[]>([]);
+  const [soldAuctions, setSoldAuctions] = useState<Auction[]>([]);
+  const [unsoldAuctions, setUnsoldAuctions] = useState<Auction[]>([]);
+
+  // Buyer details modal state
+  const [viewingBuyerAuction, setViewingBuyerAuction] = useState<Auction | null>(null);
+  const [buyerContact, setBuyerContact] = useState<BuyerContactDetails | null>(null);
+  const [loadingBuyer, setLoadingBuyer] = useState(false);
+
+  // Relist modal state
+  const [relistingAuction, setRelistingAuction] = useState<Auction | null>(null);
+  const [relistStartPrice, setRelistStartPrice] = useState<number>(500);
+  const [relistDuration, setRelistDuration] = useState<number>(15);
+  const [relisting, setRelisting] = useState(false);
 
   // Create Listing Form state
   const [title, setTitle] = useState('');
@@ -32,32 +47,98 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
 
-  // Close Action modal (Approve / Reject)
-  const [closingModalAuction, setClosingModalAuction] = useState<Auction | null>(null);
-  const [rejectReason, setRejectReason] = useState('');
-
-  // Handover modal
-  const [handoverModalAuction, setHandoverModalAuction] = useState<Auction | null>(null);
-
-  const fetchSellerListings = async () => {
+  // Fetch all 3 status lists from /api/seller/auctions?status=...
+  const fetchSellerAuctions = async () => {
     if (!token) return;
     try {
-      const res = await fetch('/api/seller/listings', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (data.ok) {
-        setMyAuctions(data.all || []);
-        setActionNeeded(data.actionNeeded || []);
-      }
-    } catch {}
+      const [liveRes, soldRes, unsoldRes] = await Promise.all([
+        fetch('/api/seller/auctions?status=live', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/seller/auctions?status=sold', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/seller/auctions?status=unsold', { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      const [liveData, soldData, unsoldData] = await Promise.all([
+        liveRes.json(),
+        soldRes.json(),
+        unsoldRes.json(),
+      ]);
+
+      if (liveData.ok) setPostedAuctions(liveData.auctions || []);
+      if (soldData.ok) setSoldAuctions(soldData.auctions || []);
+      if (unsoldData.ok) setUnsoldAuctions(unsoldData.auctions || []);
+    } catch (err) {
+      console.error('Error fetching seller auctions:', err);
+    }
   };
 
   useEffect(() => {
-    fetchSellerListings();
-    const interval = setInterval(fetchSellerListings, 6000);
+    fetchSellerAuctions();
+    const interval = setInterval(fetchSellerAuctions, 4000);
     return () => clearInterval(interval);
   }, [token]);
+
+  // View Buyer Details handler
+  const handleViewBuyer = async (auction: Auction) => {
+    setViewingBuyerAuction(auction);
+    setBuyerContact(null);
+    setLoadingBuyer(true);
+    try {
+      const res = await fetch(`/api/seller/auctions/${auction._id}/buyer`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.ok && data.buyer) {
+        setBuyerContact(data.buyer);
+      } else {
+        onShowToast('error', 'Buyer Details', data.error || 'Failed to retrieve buyer contact');
+        setViewingBuyerAuction(null);
+      }
+    } catch {
+      onShowToast('error', 'Error', 'Failed to retrieve buyer details');
+      setViewingBuyerAuction(null);
+    } finally {
+      setLoadingBuyer(false);
+    }
+  };
+
+  // Open Relist Modal
+  const handleOpenRelist = (auction: Auction) => {
+    setRelistingAuction(auction);
+    setRelistStartPrice(auction.startPrice || 500);
+    setRelistDuration(15);
+  };
+
+  // Submit Relist
+  const handleRelistSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!relistingAuction) return;
+    setRelisting(true);
+    try {
+      const res = await fetch(`/api/seller/auctions/${relistingAuction._id}/relist`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          startPrice: relistStartPrice,
+          durationMinutes: relistDuration,
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        onShowToast('success', 'Auction Relisted!', `"${relistingAuction.title}" is now Live.`);
+        setRelistingAuction(null);
+        setPanelTab('posted');
+        fetchSellerAuctions();
+      } else {
+        onShowToast('error', 'Relist Failed', data.error || 'Could not relist auction');
+      }
+    } catch {
+      onShowToast('error', 'Error', 'Failed to relist auction');
+    } finally {
+      setRelisting(false);
+    }
+  };
 
   // Local file upload processor
   const handleFiles = async (fileList: FileList | File[]) => {
@@ -101,63 +182,42 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
               'Content-Type': 'application/json',
               Authorization: `Bearer ${token}`,
             },
-            body: JSON.stringify({
-              data: base64Data,
-              filename: file.name,
-            }),
+            body: JSON.stringify({ image: base64Data, filename: file.name }),
           });
           const data = await res.json();
-          if (res.ok && data.ok && data.url) {
+          if (data.ok && data.url) {
             finalUrl = data.url;
           }
-        } catch {}
+        } catch {
+          // fallback to base64Data
+        }
 
         setImages((prev) => [...prev, finalUrl]);
       } catch {
-        onShowToast('error', 'Upload Error', `Failed to read ${file.name}`);
+        onShowToast('error', 'Upload Failed', `Could not process ${file.name}`);
       }
     }
 
     setUploadingImage(false);
   };
 
-  const handleRemoveImage = (indexToRemove: number) => {
-    setImages((prev) => prev.filter((_, i) => i !== indexToRemove));
-  };
-
-  const handleSetPrimary = (indexToPrimary: number) => {
-    setImages((prev) => {
-      const copy = [...prev];
-      const [item] = copy.splice(indexToPrimary, 1);
-      return [item, ...copy];
-    });
-  };
-
   const handleCreateListing = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim() || !category || startPrice <= 0 || minIncrement <= 0) {
-      onShowToast('warning', 'Validation Error', 'Please fill in all listing details with valid numbers');
+    if (!title.trim()) {
+      onShowToast('warning', 'Missing Field', 'Please provide an item title');
       return;
     }
 
+    let durationMinutes = 15;
+    if (duration === '1 Minute (Testing)') durationMinutes = 1;
+    else if (duration === '15 Minutes') durationMinutes = 15;
+    else if (duration === '1 Hour') durationMinutes = 60;
+    else if (duration === '24 Hours') durationMinutes = 24 * 60;
+    else if (duration === '3 Days') durationMinutes = 3 * 24 * 60;
+
     setCreating(true);
-
-    let closesAt: string;
-    if (duration === '1 Minute (Testing)') {
-      closesAt = new Date(Date.now() + 60 * 1000).toISOString();
-    } else {
-      let hours = 24;
-      if (duration === '3 Days') hours = 72;
-      else if (duration === '7 Days') hours = 168;
-      closesAt = new Date(Date.now() + hours * 3600 * 1000).toISOString();
-    }
-
-    const listingImages = images.length > 0
-      ? images
-      : ['https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=800&q=80'];
-
     try {
-      const res = await fetch('/api/seller/listings', {
+      const res = await fetch('/api/seller/auctions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -169,127 +229,92 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
           description: description.trim(),
           condition,
           startPrice,
-          maxPrice: startPrice * 5,
           minIncrement,
-          closesAt,
-          images: listingImages,
+          durationMinutes,
+          images: images.length > 0 ? images : undefined,
         }),
       });
 
       const data = await res.json();
-      if (res.ok && data.ok) {
-        onShowToast('success', 'Listing Created! 🎉', `"${title}" is now live for bidding`);
+      if (data.ok) {
+        onShowToast('success', 'Listing Created!', `"${title}" is now Live for bidding.`);
         setTitle('');
         setDescription('');
-        setStartPrice(500);
-        setMinIncrement(50);
         setImages([]);
-        setSidebarTab('my_listings');
-        fetchSellerListings();
+        setStartPrice(500);
+        setPanelTab('posted');
+        fetchSellerAuctions();
       } else {
-        onShowToast('error', 'Error', data.error || 'Failed to create listing');
+        onShowToast('error', 'Creation Failed', data.error || 'Could not create auction');
       }
     } catch {
-      onShowToast('error', 'Error', 'Network connection failed');
+      onShowToast('error', 'Error', 'Failed to connect to server');
     } finally {
       setCreating(false);
     }
   };
 
-  const handleApproveReject = async (decision: 'approved' | 'rejected') => {
-    if (!closingModalAuction) return;
-    try {
-      const res = await fetch(`/api/seller/auctions/${closingModalAuction._id}/close-action`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ decision, reason: rejectReason }),
-      });
-      if (res.ok) {
-        onShowToast('success', 'Decision Saved', `Auction is now ${decision === 'approved' ? 'Reserved' : 'Closed'}`);
-        setClosingModalAuction(null);
-        setRejectReason('');
-        fetchSellerListings();
-      }
-    } catch {
-      onShowToast('error', 'Error', 'Failed to save decision');
-    }
-  };
-
-  const handleHandover = async (status: 'confirmed' | 'failed') => {
-    if (!handoverModalAuction) return;
-    try {
-      const res = await fetch(`/api/seller/auctions/${handoverModalAuction._id}/handover`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ status }),
-      });
-      if (res.ok) {
-        onShowToast('success', 'Handover Recorded', `Status updated to ${status === 'confirmed' ? 'Sold' : 'Pickup Failed'}`);
-        setHandoverModalAuction(null);
-        fetchSellerListings();
-      }
-    } catch {
-      onShowToast('error', 'Error', 'Failed to record handover');
-    }
+  const formatCountdown = (closesAtStr: string) => {
+    const diff = new Date(closesAtStr).getTime() - Date.now();
+    if (diff <= 0) return 'Closed';
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff / 1000 / 60) % 60);
+    const seconds = Math.floor((diff / 1000) % 60);
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m ${seconds}s`;
   };
 
   return (
     <div className="app-body-container">
       <div className="seller-layout">
-        {/* Left Sidebar matching Screen 4 */}
+        {/* Left Sidebar */}
         <aside className="seller-sidebar">
           <button
-            className={`seller-menu-btn ${sidebarTab === 'sell' ? 'active' : ''}`}
-            onClick={() => setSidebarTab('sell')}
+            className={`seller-menu-btn ${panelTab === 'posted' ? 'active' : ''}`}
+            onClick={() => setPanelTab('posted')}
           >
             <span>🏷️</span>
-            <span>Sell Item</span>
+            <span>Posted ({postedAuctions.length})</span>
           </button>
           <button
-            className={`seller-menu-btn ${sidebarTab === 'my_listings' ? 'active' : ''}`}
-            onClick={() => setSidebarTab('my_listings')}
+            className={`seller-menu-btn ${panelTab === 'sold' ? 'active' : ''}`}
+            onClick={() => setPanelTab('sold')}
           >
-            <span>📋</span>
-            <span>My Listings ({myAuctions.length})</span>
+            <span>🏆</span>
+            <span>Closed (Sold) ({soldAuctions.length})</span>
           </button>
           <button
-            className={`seller-menu-btn ${sidebarTab === 'bids_received' ? 'active' : ''}`}
-            onClick={() => setSidebarTab('bids_received')}
+            className={`seller-menu-btn ${panelTab === 'unsold' ? 'active' : ''}`}
+            onClick={() => setPanelTab('unsold')}
           >
-            <span>🔨</span>
-            <span>Bids Received {actionNeeded.length > 0 && `(${actionNeeded.length})`}</span>
+            <span>⏱️</span>
+            <span>Not Attended ({unsoldAuctions.length})</span>
           </button>
           <button
-            className={`seller-menu-btn ${sidebarTab === 'sold' ? 'active' : ''}`}
-            onClick={() => setSidebarTab('sold')}
+            className={`seller-menu-btn ${panelTab === 'sell' ? 'active' : ''}`}
+            onClick={() => setPanelTab('sell')}
           >
-            <span>🤝</span>
-            <span>Sold Items</span>
+            <span>➕</span>
+            <span>Create Listing</span>
           </button>
         </aside>
 
         {/* Main Content Area */}
         <main>
-          {sidebarTab === 'sell' ? (
-            /* Screen 4: Create a New Listing Form */
-            <div className="seller-content-card">
+          {panelTab === 'sell' ? (
+            /* Create a New Listing Form */
+            <div className="seller-content-card" style={{ padding: '2rem' }}>
               <div style={{ marginBottom: '1.75rem' }}>
                 <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', fontWeight: 700 }}>
                   Create a New Listing
                 </h2>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem' }}>
-                  Fill in the details to list your item for auction (Seller: {user.name}).
+                  Fill in the details to list your item for live campus bidding (Seller: {user.name}).
                 </p>
               </div>
 
               <form onSubmit={handleCreateListing}>
-                {/* 2-Column: Title & Category */}
+                {/* Title & Category */}
                 <div className="form-grid-2" style={{ marginBottom: '1.25rem' }}>
                   <div>
                     <label className="form-label">Item Title</label>
@@ -320,61 +345,20 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
                   </div>
                 </div>
 
-                {/* Description Textarea */}
+                {/* Description */}
                 <div style={{ marginBottom: '1.25rem' }}>
-                  <label className="form-label">Description</label>
+                  <label className="form-label">Description & Accessories</label>
                   <textarea
                     className="textarea-field"
-                    placeholder="Add item details, condition, accessories included..."
+                    placeholder="Describe condition, specs, hostel block for pickup..."
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    required
+                    rows={3}
                   />
                 </div>
 
-                {/* 2-Column: Starting Price & Minimum Increment */}
-                <div className="form-grid-2" style={{ marginBottom: '1.25rem' }}>
-                  <div>
-                    <label className="form-label">Starting Price (₹)</label>
-                    <input
-                      type="number"
-                      className="input-field"
-                      style={{ paddingLeft: '1rem' }}
-                      placeholder="e.g. 500"
-                      value={startPrice}
-                      onChange={(e) => setStartPrice(Number(e.target.value))}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="form-label">Minimum Increment (₹)</label>
-                    <input
-                      type="number"
-                      className="input-field"
-                      style={{ paddingLeft: '1rem' }}
-                      placeholder="e.g. 50"
-                      value={minIncrement}
-                      onChange={(e) => setMinIncrement(Number(e.target.value))}
-                      required
-                    />
-                  </div>
-                </div>
-
-                {/* 2-Column: Auction Duration & Condition */}
-                <div className="form-grid-2" style={{ marginBottom: '1.25rem' }}>
-                  <div>
-                    <label className="form-label">Auction Duration</label>
-                    <select
-                      className="select-field"
-                      value={duration}
-                      onChange={(e) => setDuration(e.target.value)}
-                    >
-                      <option value="1 Minute (Testing)">⏱️ 1 Minute (Testing)</option>
-                      <option value="1 Day">1 Day (24 Hours)</option>
-                      <option value="3 Days">3 Days</option>
-                      <option value="7 Days">7 Days</option>
-                    </select>
-                  </div>
+                {/* Condition & Prices */}
+                <div className="form-grid-3" style={{ marginBottom: '1.25rem' }}>
                   <div>
                     <label className="form-label">Condition</label>
                     <select
@@ -382,321 +366,592 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
                       value={condition}
                       onChange={(e) => setCondition(e.target.value)}
                     >
-                      <option value="Good Condition">Good Condition</option>
+                      <option value="Brand New">Brand New</option>
                       <option value="Like New">Like New</option>
-                      <option value="Fair">Fair / Refurbished</option>
+                      <option value="Good Condition">Good Condition</option>
+                      <option value="Fair / Used">Fair / Used</option>
                     </select>
+                  </div>
+                  <div>
+                    <label className="form-label">Starting Price (₹)</label>
+                    <input
+                      type="number"
+                      className="input-field"
+                      style={{ paddingLeft: '1rem' }}
+                      min="1"
+                      value={startPrice}
+                      onChange={(e) => setStartPrice(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="form-label">Min Increment (₹)</label>
+                    <input
+                      type="number"
+                      className="input-field"
+                      style={{ paddingLeft: '1rem' }}
+                      min="10"
+                      step="10"
+                      value={minIncrement}
+                      onChange={(e) => setMinIncrement(Math.max(10, parseInt(e.target.value, 10) || 10))}
+                      required
+                    />
                   </div>
                 </div>
 
-                {/* Local Image Upload (Drag-and-Drop + File Picker) */}
+                {/* Duration */}
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <label className="form-label">Auction Duration</label>
+                  <select
+                    className="select-field"
+                    value={duration}
+                    onChange={(e) => setDuration(e.target.value)}
+                  >
+                    <option value="1 Minute (Testing)">1 Minute (Fast Testing)</option>
+                    <option value="15 Minutes">15 Minutes</option>
+                    <option value="1 Hour">1 Hour</option>
+                    <option value="24 Hours">24 Hours (Standard)</option>
+                    <option value="3 Days">3 Days</option>
+                  </select>
+                </div>
+
+                {/* Local Image Upload Area */}
                 <div style={{ marginBottom: '1.75rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-                    <label className="form-label" style={{ margin: 0 }}>
-                      Item Photos ({images.length}/5)
-                    </label>
-                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                      PNG, JPG, WEBP (Max 8MB each)
-                    </span>
+                  <label className="form-label">Item Photos (Max 5)</label>
+                  <div
+                    onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                    onDragLeave={() => setIsDragging(false)}
+                    onDrop={(e) => { e.preventDefault(); setIsDragging(false); handleFiles(e.dataTransfer.files); }}
+                    onClick={() => fileInputRef.current?.click()}
+                    style={{
+                      border: `2px dashed ${isDragging ? '#2563eb' : '#cbd5e1'}`,
+                      background: isDragging ? '#eff6ff' : '#f8fafc',
+                      borderRadius: '8px',
+                      padding: '1.75rem',
+                      textAlign: 'center',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      style={{ display: 'none' }}
+                      accept="image/*"
+                      multiple
+                      onChange={(e) => e.target.files && handleFiles(e.target.files)}
+                    />
+                    <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📷</div>
+                    <div style={{ fontWeight: 600, color: '#0f172a', marginBottom: '0.25rem' }}>
+                      Click to upload photos or drag and drop
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                      PNG, JPG up to 8MB each ({images.length}/5 photos uploaded)
+                    </div>
                   </div>
 
-                  {/* Hidden Native File Input */}
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    accept="image/png, image/jpeg, image/jpg, image/webp"
-                    multiple
-                    style={{ display: 'none' }}
-                    onChange={(e) => {
-                      if (e.target.files) {
-                        handleFiles(e.target.files);
-                        e.target.value = '';
-                      }
-                    }}
-                  />
-
-                  {images.length === 0 ? (
-                    <div
-                      className={`image-upload-box ${isDragging ? 'drag-over' : ''}`}
-                      onClick={() => fileInputRef.current?.click()}
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        setIsDragging(true);
-                      }}
-                      onDragLeave={(e) => {
-                        e.preventDefault();
-                        setIsDragging(false);
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        setIsDragging(false);
-                        if (e.dataTransfer.files) {
-                          handleFiles(e.dataTransfer.files);
-                        }
-                      }}
-                    >
-                      <div className="upload-icon">{uploadingImage ? '⏳' : '📷'}</div>
-                      <div className="upload-text-main">
-                        {uploadingImage ? 'Processing local photo...' : 'Click to browse local images or drag & drop'}
-                      </div>
-                      <div className="upload-text-sub">
-                        Select clear photos from your device to display on the auction listing
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      <div className="image-preview-grid">
-                        {images.map((imgUrl, idx) => (
-                          <div key={idx} className="image-preview-card">
-                            <img src={imgUrl} alt={`Uploaded ${idx + 1}`} />
-                            {idx === 0 && (
-                              <div className="image-primary-badge">★ Cover</div>
-                            )}
-                            <button
-                              type="button"
-                              className="image-remove-btn"
-                              onClick={() => handleRemoveImage(idx)}
-                              title="Remove photo"
-                            >
-                              ✕
-                            </button>
-                            {idx > 0 && (
-                              <button
-                                type="button"
-                                style={{
-                                  position: 'absolute',
-                                  bottom: '5px',
-                                  left: '5px',
-                                  background: 'rgba(15, 23, 42, 0.75)',
-                                  color: '#cbd5e1',
-                                  border: 'none',
-                                  fontSize: '0.65rem',
-                                  padding: '0.1rem 0.35rem',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer',
-                                }}
-                                onClick={() => handleSetPrimary(idx)}
-                                title="Make this cover photo"
-                              >
-                                Set Cover
-                              </button>
-                            )}
-                          </div>
-                        ))}
-
-                        {images.length < 5 && (
-                          <div
-                            className="image-upload-add-more"
-                            onClick={() => fileInputRef.current?.click()}
-                            onDragOver={(e) => {
-                              e.preventDefault();
-                              setIsDragging(true);
+                  {images.length > 0 && (
+                    <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
+                      {images.map((img, idx) => (
+                        <div key={idx} style={{ position: 'relative' }}>
+                          <img
+                            src={img}
+                            alt={`Preview ${idx + 1}`}
+                            style={{ width: '70px', height: '70px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #e2e8f0' }}
+                          />
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setImages(images.filter((_, i) => i !== idx)); }}
+                            style={{
+                              position: 'absolute',
+                              top: '-6px',
+                              right: '-6px',
+                              background: '#ef4444',
+                              color: '#fff',
+                              border: 'none',
+                              borderRadius: '50%',
+                              width: '20px',
+                              height: '20px',
+                              fontSize: '12px',
+                              cursor: 'pointer',
                             }}
-                            onDragLeave={(e) => {
-                              e.preventDefault();
-                              setIsDragging(false);
-                            }}
-                            onDrop={(e) => {
-                              e.preventDefault();
-                              setIsDragging(false);
-                              if (e.dataTransfer.files) {
-                                handleFiles(e.dataTransfer.files);
-                              }
-                            }}
-                            title="Add more photos"
                           >
-                            <span style={{ fontSize: '1.4rem', lineHeight: 1 }}>+</span>
-                            <span>Add Photo</span>
-                          </div>
-                        )}
-                      </div>
-                      <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: '#64748b' }}>
-                        <span>✓ {images.length} photo(s) selected from your device</span>
-                        <button
-                          type="button"
-                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.75rem' }}
-                          onClick={() => setImages([])}
-                        >
-                          Clear all
-                        </button>
-                      </div>
+                            ×
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
 
-                {/* Submit Button */}
-                <button
-                  type="submit"
-                  className="btn-primary-dark"
-                  disabled={creating}
-                >
-                  🏷 List Item
-                </button>
+                <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    className="btn-outline-action"
+                    onClick={() => setPanelTab('posted')}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={creating || uploadingImage}
+                    style={{ minWidth: '160px' }}
+                  >
+                    {creating ? 'Publishing...' : 'Publish Auction'}
+                  </button>
+                </div>
               </form>
             </div>
           ) : (
-            /* My Listings / Action Needed view */
-            <div>
-              {/* Action Needed Card */}
-              {actionNeeded.length > 0 && (
-                <div style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '14px', padding: '1.25rem', marginBottom: '1.5rem' }}>
-                  <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#92400e', marginBottom: '0.5rem' }}>
-                    ⚡ Action Needed on {actionNeeded.length} Auction(s)
-                  </h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                    {actionNeeded.map((a) => (
-                      <div
-                        key={a._id}
-                        style={{ background: '#ffffff', padding: '0.85rem', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                      >
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{a.title}</div>
-                          <div style={{ fontSize: '0.78rem', color: '#64748b' }}>
-                            Winning bid: ₹{a.currentPrice} · Status: {a.status}
+            /* Seller Panel: Posted | Closed (Sold) | Not Attended (Unsold) */
+            <div className="seller-content-card" style={{ padding: '1.75rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                <div>
+                  <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', fontWeight: 700 }}>
+                    Seller Panel
+                  </h2>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem' }}>
+                    Track your live auctions, view winning buyer details, and relist unsold inventory.
+                  </p>
+                </div>
+                <button
+                  className="btn-primary"
+                  onClick={() => setPanelTab('sell')}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 1rem' }}
+                >
+                  <span>➕</span>
+                  <span>New Listing</span>
+                </button>
+              </div>
+
+              {/* 3 Subtabs bar: Posted, Closed (Sold), Not Attended (Unsold) */}
+              <div className="bids-filter-bar" style={{ marginBottom: '1.5rem' }}>
+                <button
+                  className={`bid-filter-chip ${panelTab === 'posted' ? 'active' : ''}`}
+                  onClick={() => setPanelTab('posted')}
+                >
+                  Posted ({postedAuctions.length})
+                </button>
+                <button
+                  className={`bid-filter-chip ${panelTab === 'sold' ? 'active' : ''}`}
+                  onClick={() => setPanelTab('sold')}
+                >
+                  Closed (Sold) ({soldAuctions.length})
+                </button>
+                <button
+                  className={`bid-filter-chip ${panelTab === 'unsold' ? 'active' : ''}`}
+                  onClick={() => setPanelTab('unsold')}
+                >
+                  Not Attended (Unsold) ({unsoldAuctions.length})
+                </button>
+              </div>
+
+              {/* Tab 1: Posted (Live) */}
+              {panelTab === 'posted' && (
+                <div className="bids-list">
+                  {postedAuctions.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: 'var(--text-muted)' }}>
+                      <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>🏷️</div>
+                      <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.35rem' }}>
+                        No Live Auctions Posted
+                      </h3>
+                      <p style={{ fontSize: '0.88rem', maxWidth: '380px', margin: '0 auto 1.25rem' }}>
+                        You don't have any active live auctions right now. Create a new listing to start selling!
+                      </p>
+                      <button className="btn-primary" onClick={() => setPanelTab('sell')}>
+                        + Create a Listing
+                      </button>
+                    </div>
+                  ) : (
+                    postedAuctions.map((item) => {
+                      const img = item.images && item.images.length > 0 && item.images[0]
+                        ? item.images[0]
+                        : 'https://images.unsplash.com/photo-1526738549149-8e07eca6c147?auto=format&fit=crop&w=400&q=80';
+                      const cur = item.currentPrice || item.startPrice;
+
+                      return (
+                        <div
+                          key={item._id}
+                          className="bid-row-card"
+                          onClick={() => onSelectAuction(item._id)}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          <div className="bid-row-left">
+                            <img src={img} alt={item.title} className="bid-row-thumb" />
+                            <div className="bid-row-info">
+                              <div className="bid-row-title">{item.title}</div>
+                              <div className="bid-row-pricing">
+                                <span className="bid-row-cur-bid">Current Bid: ₹{cur.toLocaleString()}</span>
+                                <span>·</span>
+                                <span style={{ color: '#0284c7', fontWeight: 600, fontSize: '0.85rem' }}>
+                                  {item.bidCount} Bids placed
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="bid-row-right">
+                            <div className="bid-row-timer">
+                              <span>⏱</span>
+                              <span>{formatCountdown(item.closesAt)}</span>
+                            </div>
+                            <button
+                              className="btn-outline-action"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectAuction(item._id);
+                              }}
+                            >
+                              Live Console
+                            </button>
                           </div>
                         </div>
-
-                        {a.status === 'pending_approval' && (
-                          <button
-                            className="btn-primary-dark"
-                            style={{ height: '36px', width: 'auto', padding: '0 1rem', background: '#10b981' }}
-                            onClick={() => setClosingModalAuction(a)}
-                          >
-                            Review & Approve
-                          </button>
-                        )}
-
-                        {a.status === 'reserved' && (
-                          <button
-                            className="btn-primary-dark"
-                            style={{ height: '36px', width: 'auto', padding: '0 1rem', background: '#0f172a' }}
-                            onClick={() => setHandoverModalAuction(a)}
-                          >
-                            Confirm Handover
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                      );
+                    })
+                  )}
                 </div>
               )}
 
-              {/* All Seller Listings */}
-              <div className="bids-list">
-                {myAuctions.map((a) => {
-                  const img = a.images && a.images.length > 0
-                    ? a.images[0]
-                    : 'https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=600&q=80';
-                  return (
-                    <div
-                      key={a._id}
-                      className="bid-row-card"
-                      onClick={() => onSelectAuction(a._id)}
-                    >
-                      <div className="bid-row-left">
-                        <img src={img} alt={a.title} className="bid-row-thumb" />
-                        <div className="bid-row-info">
-                          <div className="bid-row-title">{a.title}</div>
-                          <div className="bid-row-pricing">
-                            <span className="bid-row-cur-bid">Highest Bid: ₹{a.currentPrice || a.startPrice}</span>
-                            <span>·</span>
-                            <span style={{ fontWeight: 600, textTransform: 'capitalize' }}>Status: {a.status}</span>
+              {/* Tab 2: Closed (Sold) with "View buyer details" button */}
+              {panelTab === 'sold' && (
+                <div className="bids-list">
+                  {soldAuctions.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: 'var(--text-muted)' }}>
+                      <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>🏆</div>
+                      <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.35rem' }}>
+                        No Sold Items Yet
+                      </h3>
+                      <p style={{ fontSize: '0.88rem', maxWidth: '380px', margin: '0 auto' }}>
+                        When an auction concludes with bids, it will be listed here with buyer contact details.
+                      </p>
+                    </div>
+                  ) : (
+                    soldAuctions.map((item) => {
+                      const img = item.images && item.images.length > 0 && item.images[0]
+                        ? item.images[0]
+                        : 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=400&q=80';
+                      const finalPrice = item.currentPrice || item.startPrice;
+                      const closedDate = new Date(item.closesAt || item.createdAt || Date.now()).toLocaleDateString();
+
+                      return (
+                        <div
+                          key={item._id}
+                          className="bid-row-card"
+                          onClick={() => onSelectAuction(item._id)}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          <div className="bid-row-left">
+                            <img src={img} alt={item.title} className="bid-row-thumb" />
+                            <div className="bid-row-info">
+                              <div className="bid-row-title">{item.title}</div>
+                              <div className="bid-row-pricing">
+                                <span className="bid-row-cur-bid">Final Price: ₹{finalPrice.toLocaleString()}</span>
+                                <span>·</span>
+                                <span style={{ color: '#059669', fontWeight: 600, fontSize: '0.85rem' }}>
+                                  ✓ Sold ({item.bidCount} Bids)
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="bid-row-right" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.45rem' }}>
+                            <span style={{ fontSize: '0.82rem', color: '#64748b' }}>
+                              📅 Closed {closedDate}
+                            </span>
+                            <button
+                              className="btn-primary"
+                              style={{ padding: '0.35rem 0.85rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleViewBuyer(item);
+                              }}
+                            >
+                              <span>👤</span>
+                              <span>View buyer details</span>
+                            </button>
                           </div>
                         </div>
-                      </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
 
-                      <div className="bid-row-right">
-                        <button
-                          className="btn-outline-action"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onSelectAuction(a._id);
-                          }}
-                        >
-                          View Auction
-                        </button>
-                      </div>
+              {/* Tab 3: Not Attended (Unsold) with "Relist" button */}
+              {panelTab === 'unsold' && (
+                <div className="bids-list">
+                  {unsoldAuctions.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: 'var(--text-muted)' }}>
+                      <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>⏱️</div>
+                      <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.35rem' }}>
+                        No Unsold Auctions
+                      </h3>
+                      <p style={{ fontSize: '0.88rem', maxWidth: '380px', margin: '0 auto' }}>
+                        Auctions that reached their deadline without any bids will appear here with a 1-click Relist action.
+                      </p>
                     </div>
-                  );
-                })}
-              </div>
+                  ) : (
+                    unsoldAuctions.map((item) => {
+                      const img = item.images && item.images.length > 0 && item.images[0]
+                        ? item.images[0]
+                        : 'https://images.unsplash.com/photo-1518455027359-f3f8164ba6bd?auto=format&fit=crop&w=400&q=80';
+                      const endedDate = new Date(item.closesAt || item.createdAt || Date.now()).toLocaleDateString();
+
+                      return (
+                        <div
+                          key={item._id}
+                          className="bid-row-card"
+                          onClick={() => onSelectAuction(item._id)}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          <div className="bid-row-left">
+                            <img src={img} alt={item.title} className="bid-row-thumb" />
+                            <div className="bid-row-info">
+                              <div className="bid-row-title">{item.title}</div>
+                              <div className="bid-row-pricing">
+                                <span className="bid-row-cur-bid">Start Price: ₹{item.startPrice.toLocaleString()}</span>
+                                <span>·</span>
+                                <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>
+                                  0 Bids (Unsold)
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="bid-row-right" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.45rem' }}>
+                            <span style={{ fontSize: '0.82rem', color: '#94a3b8' }}>
+                              Ended {endedDate}
+                            </span>
+                            <button
+                              className="btn-outline-action"
+                              style={{ padding: '0.35rem 0.85rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem', borderColor: '#2563eb', color: '#2563eb' }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenRelist(item);
+                              }}
+                            >
+                              <span>🔄</span>
+                              <span>Relist</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
             </div>
           )}
         </main>
       </div>
 
-      {/* Approve / Reject Modal */}
-      {closingModalAuction && (
-        <div className="modal-overlay" onClick={() => setClosingModalAuction(null)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3 className="modal-title">Winning Bid Decision</h3>
-              <button className="modal-close-btn" onClick={() => setClosingModalAuction(null)}>×</button>
-            </div>
-            <p style={{ fontSize: '0.9rem', color: '#475569', marginBottom: '1rem' }}>
-              The auction for <strong>{closingModalAuction.title}</strong> has closed.
-              <br />
-              Winning Bid: <strong>₹{closingModalAuction.currentPrice}</strong>
-            </p>
-            <div style={{ marginBottom: '1.25rem' }}>
-              <label className="form-label">Optional rejection reason:</label>
-              <input
-                type="text"
-                className="input-field"
-                placeholder="e.g. Reserve price not reached"
-                value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
-              />
-            </div>
-            <div style={{ display: 'flex', gap: '0.75rem' }}>
+      {/* Buyer Details Modal (Requirement 2 & 3) */}
+      {viewingBuyerAuction && (
+        <div
+          className="modal-overlay"
+          onClick={() => setViewingBuyerAuction(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '1rem',
+          }}
+        >
+          <div
+            className="modal-card"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff',
+              borderRadius: '12px',
+              maxWidth: '460px',
+              width: '100%',
+              padding: '1.75rem',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '1.35rem' }}>👤</span>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0 }}>Winning Buyer Details</h3>
+              </div>
               <button
-                className="btn-primary-dark"
-                style={{ background: '#10b981' }}
-                onClick={() => handleApproveReject('approved')}
+                onClick={() => setViewingBuyerAuction(null)}
+                style={{ background: 'none', border: 'none', fontSize: '1.25rem', cursor: 'pointer', color: '#64748b' }}
               >
-                ✓ Approve Bid (Reserved)
+                ✕
               </button>
+            </div>
+
+            <p style={{ fontSize: '0.86rem', color: '#64748b', marginBottom: '1.25rem' }}>
+              Item sold: <strong>{viewingBuyerAuction.title}</strong>
+              <br />
+              Winning Bid: <strong style={{ color: '#059669' }}>₹{viewingBuyerAuction.currentPrice || viewingBuyerAuction.startPrice}</strong>
+            </p>
+
+            {loadingBuyer ? (
+              <div style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>
+                Loading verified buyer contact...
+              </div>
+            ) : buyerContact ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                <div style={{ background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>
+                    Buyer Name
+                  </div>
+                  <div style={{ fontSize: '1rem', fontWeight: 600, color: '#0f172a' }}>{buyerContact.name}</div>
+                </div>
+
+                <div style={{ background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>
+                    College Email
+                  </div>
+                  <div style={{ fontSize: '0.95rem', fontWeight: 500, color: '#2563eb' }}>
+                    <a href={`mailto:${buyerContact.collegeEmail}`} style={{ textDecoration: 'none', color: '#2563eb' }}>
+                      {buyerContact.collegeEmail}
+                    </a>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                  <div style={{ background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>
+                      Department
+                    </div>
+                    <div style={{ fontSize: '0.92rem', fontWeight: 600, color: '#0f172a' }}>{buyerContact.department}</div>
+                  </div>
+                  <div style={{ background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>
+                      Year
+                    </div>
+                    <div style={{ fontSize: '0.92rem', fontWeight: 600, color: '#0f172a' }}>{buyerContact.year}</div>
+                  </div>
+                </div>
+
+                <div style={{ background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>
+                    Phone Number
+                  </div>
+                  <div style={{ fontSize: '0.95rem', fontWeight: 600, color: buyerContact.phone ? '#059669' : '#94a3b8' }}>
+                    {buyerContact.phone || 'Phone not shared by student'}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '1.5rem', color: '#ef4444' }}>
+                Unable to load buyer information.
+              </div>
+            )}
+
+            <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end' }}>
               <button
-                className="btn-primary-dark"
-                style={{ background: '#ef4444' }}
-                onClick={() => handleApproveReject('rejected')}
+                className="btn-primary"
+                onClick={() => setViewingBuyerAuction(null)}
+                style={{ padding: '0.5rem 1.25rem', borderRadius: '6px' }}
               >
-                ✕ Reject Bid
+                Close
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Handover Modal */}
-      {handoverModalAuction && (
-        <div className="modal-overlay" onClick={() => setHandoverModalAuction(null)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3 className="modal-title">Campus Handover Outcome</h3>
-              <button className="modal-close-btn" onClick={() => setHandoverModalAuction(null)}>×</button>
+      {/* Relist Modal (Requirement 2 & 3) */}
+      {relistingAuction && (
+        <div
+          className="modal-overlay"
+          onClick={() => setRelistingAuction(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '1rem',
+          }}
+        >
+          <div
+            className="modal-card"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff',
+              borderRadius: '12px',
+              maxWidth: '460px',
+              width: '100%',
+              padding: '1.75rem',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '1.35rem' }}>🔄</span>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0 }}>Relist Unsold Auction</h3>
+              </div>
+              <button
+                onClick={() => setRelistingAuction(null)}
+                style={{ background: 'none', border: 'none', fontSize: '1.25rem', cursor: 'pointer', color: '#64748b' }}
+              >
+                ✕
+              </button>
             </div>
-            <p style={{ fontSize: '0.9rem', color: '#475569', marginBottom: '1.25rem' }}>
-              Item: <strong>{handoverModalAuction.title}</strong>
-              <br />
-              Please record the pickup outcome with the student buyer:
+
+            <p style={{ fontSize: '0.86rem', color: '#64748b', marginBottom: '1.25rem' }}>
+              Prefilling details from: <strong>{relistingAuction.title}</strong>
             </p>
-            <div style={{ display: 'flex', gap: '0.75rem' }}>
-              <button
-                className="btn-primary-dark"
-                style={{ background: '#10b981' }}
-                onClick={() => handleHandover('confirmed')}
-              >
-                🤝 Handover Successful (Sold)
-              </button>
-              <button
-                className="btn-primary-dark"
-                style={{ background: '#64748b' }}
-                onClick={() => handleHandover('failed')}
-              >
-                ⚠️ Pickup Failed
-              </button>
-            </div>
+
+            <form onSubmit={handleRelistSubmit}>
+              <div style={{ marginBottom: '1.25rem' }}>
+                <label className="form-label">Starting Price (₹)</label>
+                <input
+                  type="number"
+                  className="input-field"
+                  style={{ paddingLeft: '1rem' }}
+                  min="1"
+                  value={relistStartPrice}
+                  onChange={(e) => setRelistStartPrice(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  required
+                />
+                <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                  You can lower the starting price to attract more bidders.
+                </span>
+              </div>
+
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label className="form-label">Auction Duration</label>
+                <select
+                  className="select-field"
+                  value={relistDuration}
+                  onChange={(e) => setRelistDuration(parseInt(e.target.value, 10))}
+                >
+                  <option value={1}>1 Minute (Fast Testing)</option>
+                  <option value={15}>15 Minutes</option>
+                  <option value={60}>1 Hour</option>
+                  <option value={1440}>24 Hours (Standard)</option>
+                  <option value={4320}>3 Days</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  className="btn-outline-action"
+                  onClick={() => setRelistingAuction(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={relisting}
+                  style={{ minWidth: '130px' }}
+                >
+                  {relisting ? 'Relisting...' : 'Relist Auction'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

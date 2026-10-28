@@ -25,6 +25,12 @@ import {
 } from './auth.js';
 import { startAuctionSweeper } from './sweeper.js';
 import { presenceManager } from './presence.js';
+import {
+  getSellerAuctions,
+  getWinningBuyerDetails,
+  relistUnsoldAuction,
+  getSellerDetailsForWinner,
+} from './seller/sellerController.js';
 
 dotenv.config();
 
@@ -129,7 +135,7 @@ async function startDevServer() {
   await seedAuthorizedStudents(db);
 
   // Start background closing sweeper
-  startAuctionSweeper(db, 5000);
+  startAuctionSweeper(db, 2000);
   console.log('⏱️ Background auction closing sweeper started.');
 
   const cols = getCollections(db);
@@ -619,6 +625,48 @@ async function startDevServer() {
     // SELLER FLOW (Sem 7, 8, 9)
     // ==========================================
 
+    // 1. GET /api/seller/auctions?status=live|sold|unsold (paginated, indexed on { sellerId, status })
+    if (url.pathname === '/api/seller/auctions' && req.method === 'GET') {
+      const auth = getAuthUser(req);
+      if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
+
+      const statusParam = url.searchParams.get('status');
+      const page = parseInt(url.searchParams.get('page') || '1', 10);
+      const limit = parseInt(url.searchParams.get('limit') || '10', 10);
+
+      const result = await getSellerAuctions(db, new ObjectId(auth.userId), statusParam, page, limit);
+      return sendJson(res, 200, { ok: true, ...result });
+    }
+
+    // 2. GET /api/seller/auctions/:id/buyer -> winning bidder name, college email, dept/year, phone (if opted in)
+    const sellerBuyerMatch = url.pathname.match(/^\/api\/seller\/auctions\/([a-f0-9]{24})\/buyer$/);
+    if (sellerBuyerMatch && req.method === 'GET') {
+      const auth = getAuthUser(req);
+      if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
+
+      const auctionId = new ObjectId(sellerBuyerMatch[1]);
+      const resData = await getWinningBuyerDetails(db, new ObjectId(auth.userId), auctionId);
+      if (!resData.ok) {
+        return sendJson(res, resData.statusCode, { ok: false, error: resData.error });
+      }
+      return sendJson(res, 200, { ok: true, buyer: resData.data });
+    }
+
+    // 3. POST /api/seller/auctions/:id/relist -> creates a new auction prefilled from an unsold one
+    const relistMatch = url.pathname.match(/^\/api\/seller\/auctions\/([a-f0-9]{24})\/relist$/);
+    if (relistMatch && req.method === 'POST') {
+      const auth = getAuthUser(req);
+      if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
+
+      const auctionId = new ObjectId(relistMatch[1]);
+      const body = await readBody(req).catch(() => ({}));
+      const resData = await relistUnsoldAuction(db, new ObjectId(auth.userId), auctionId, body);
+      if (!resData.ok) {
+        return sendJson(res, resData.statusCode, { ok: false, error: resData.error });
+      }
+      return sendJson(res, 201, { ok: true, auction: resData.data });
+    }
+
     // Seller Dashboard: Get all own listings grouped by status
     if (url.pathname === '/api/seller/listings' && req.method === 'GET') {
       const auth = getAuthUser(req);
@@ -704,7 +752,7 @@ async function startDevServer() {
           bidCount: 0,
           closesAt,
           version: 0,
-          status: 'active',
+          status: 'live',
           createdAt: new Date(),
         };
 
@@ -916,6 +964,15 @@ async function startDevServer() {
             payload: { auctionId: a._id, sellerEmail: auth.email },
             createdAt: new Date(),
           });
+
+          await eventHub.emitAll([
+            {
+              type: 'AUCTION_APPROVED',
+              targetUserId: a.leaderId,
+              auctionId: a._id,
+              payload: { title: a.title, amount: a.currentPrice, sellerEmail: auth.email },
+            },
+          ]);
         }
 
         return sendJson(res, 200, { ok: true, status: 'reserved', message: 'Winning bid approved. Item is Reserved.' });
@@ -942,6 +999,15 @@ async function startDevServer() {
             payload: { auctionId: a._id },
             createdAt: new Date(),
           });
+
+          await eventHub.emitAll([
+            {
+              type: 'AUCTION_REJECTED',
+              targetUserId: a.leaderId,
+              auctionId: a._id,
+              payload: { title: a.title, reason: reason || 'Reserve not met' },
+            },
+          ]);
         }
 
         return sendJson(res, 200, { ok: true, status: 'closed', message: 'Winning bid rejected. Item is Closed.' });
@@ -1060,7 +1126,7 @@ async function startDevServer() {
 
     // Browse Home: Search & Filters
     if (url.pathname === '/api/browse' && req.method === 'GET') {
-      const query: any = { status: 'active' };
+      const query: any = { status: { $in: ['active', 'live'] } };
 
       const search = url.searchParams.get('search');
       if (search && search.trim()) {
@@ -1531,30 +1597,61 @@ async function startDevServer() {
 
       const auctions = await cols.auctions.find({ _id: { $in: distinctAuctionIds } }).toArray();
 
-      const leading: Auction[] = [];
-      const outbid: Auction[] = [];
-      const won: Auction[] = [];
-      const lost: Auction[] = [];
+      // Compute max bid placed by this user for each auction
+      const userMaxBidsByAuction: Record<string, number> = {};
+      for (const b of userBids) {
+        const aid = b.auctionId.toString();
+        if (!userMaxBidsByAuction[aid] || b.amount > userMaxBidsByAuction[aid]) {
+          userMaxBidsByAuction[aid] = b.amount;
+        }
+      }
+
+      const leading: any[] = [];
+      const outbid: any[] = [];
+      const won: any[] = [];
+      const lost: any[] = [];
 
       for (const a of auctions) {
-        if (a.status === 'active') {
+        const yourBid = userMaxBidsByAuction[a._id.toString()] || a.currentPrice || a.startPrice;
+        const itemWithYourBid = { ...a, yourBid };
+
+        const isUserWinner =
+          (a.winnerId && a.winnerId.equals(userId)) ||
+          (a.leaderId && a.leaderId.equals(userId));
+
+        if (a.status === 'active' || a.status === 'live') {
           if (a.leaderId && a.leaderId.equals(userId)) {
-            leading.push(a);
+            leading.push({ ...itemWithYourBid, isHighest: true });
           } else {
-            outbid.push(a);
+            outbid.push({ ...itemWithYourBid, isHighest: false });
           }
-        } else if (['pending_approval', 'reserved', 'sold'].includes(a.status)) {
-          if (a.leaderId && a.leaderId.equals(userId)) {
-            won.push(a);
+        } else if (['pending_approval', 'reserved', 'sold', 'closed_sold'].includes(a.status)) {
+          if (isUserWinner) {
+            won.push({ ...itemWithYourBid, isHighest: true });
           } else {
-            lost.push(a);
+            lost.push({ ...itemWithYourBid, isHighest: false });
           }
         } else {
-          lost.push(a);
+          // 'closed', 'unsold', 'closed_unsold', 'cancelled', 'rejected'
+          lost.push({ ...itemWithYourBid, isHighest: false });
         }
       }
 
       return sendJson(res, 200, { ok: true, leading, outbid, won, lost });
+    }
+
+    // 4. GET /api/buyer/auctions/:id/seller -> returns seller contact details to the winning bidder
+    const buyerSellerMatch = url.pathname.match(/^\/api\/buyer\/auctions\/([a-f0-9]{24})\/seller$/);
+    if (buyerSellerMatch && req.method === 'GET') {
+      const auth = getAuthUser(req);
+      if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
+
+      const auctionId = new ObjectId(buyerSellerMatch[1]);
+      const resData = await getSellerDetailsForWinner(db, new ObjectId(auth.userId), auctionId);
+      if (!resData.ok) {
+        return sendJson(res, resData.statusCode, { ok: false, error: resData.error });
+      }
+      return sendJson(res, 200, { ok: true, seller: resData.data });
     }
 
     // Q&A List for an Auction

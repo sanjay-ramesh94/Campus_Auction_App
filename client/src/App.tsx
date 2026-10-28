@@ -75,9 +75,63 @@ export function App() {
     return () => clearInterval(timer);
   }, [fetchNotifications]);
 
+  // Request browser push notification permission on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        Notification.requestPermission().catch(() => {});
+      }
+    }
+  }, []);
+
+  // Browser Push Notification trigger
+  const sendBrowserPush = useCallback((title: string, body: string) => {
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(title, {
+          body,
+          icon: '/favicon.ico',
+        });
+      } catch (err) {
+        console.warn('Browser push notification error:', err);
+      }
+    }
+  }, []);
+
+  // Audio tone cue for winning or losing an auction
+  const playAlertChime = useCallback((type: 'won' | 'lost') => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      if (type === 'won') {
+        osc.frequency.setValueAtTime(523.25, ctx.currentTime);
+        osc.frequency.setValueAtTime(659.25, ctx.currentTime + 0.12);
+        osc.frequency.setValueAtTime(783.99, ctx.currentTime + 0.24);
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.5);
+      } else {
+        osc.frequency.setValueAtTime(392.0, ctx.currentTime);
+        osc.frequency.setValueAtTime(329.63, ctx.currentTime + 0.15);
+        gain.gain.setValueAtTime(0.25, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.4);
+      }
+    } catch {}
+  }, []);
+
   // Connect to SSE live feed
   useEffect(() => {
-    const eventSource = new EventSource('/api/events');
+    const sseUrl = token ? `/api/events?token=${encodeURIComponent(token)}` : '/api/events';
+    const eventSource = new EventSource(sseUrl);
 
     eventSource.onopen = () => setConnected(true);
     eventSource.onerror = () => setConnected(false);
@@ -89,14 +143,59 @@ export function App() {
 
         fetchNotifications();
 
-        if (event.type === 'DEADLINE_EXTENDED') {
+        const currentUserId = user?.id;
+        const targetId = event.targetUserId
+          ? (typeof event.targetUserId === 'object' ? (event.targetUserId.$oid || event.targetUserId.toString()) : event.targetUserId.toString())
+          : null;
+
+        const isForMe = Boolean(currentUserId && targetId && currentUserId.toString() === targetId);
+
+        if (event.type === 'AUCTION_WON') {
+          if (isForMe) {
+            const title = event.payload?.title || 'Auction Item';
+            const price = event.payload?.finalPrice || event.payload?.amount || '';
+            const msg = event.payload?.message || `You won "${title}" with a bid of ₹${price}!`;
+            showToast('success', '🏆 AUCTION WON!', msg);
+            sendBrowserPush('🏆 CampusBid — Auction Won!', msg);
+            playAlertChime('won');
+          }
+        } else if (event.type === 'AUCTION_LOST') {
+          if (isForMe) {
+            const title = event.payload?.title || 'Auction Item';
+            const price = event.payload?.finalPrice || '';
+            const msg = event.payload?.message || `Auction for "${title}" ended (final ₹${price}). You were outbid.`;
+            showToast('warning', '⏱️ AUCTION LOST', msg);
+            sendBrowserPush('⏱️ CampusBid — Auction Ended', msg);
+            playAlertChime('lost');
+          }
+        } else if (event.type === 'AUCTION_APPROVED') {
+          if (isForMe) {
+            const title = event.payload?.title || 'Auction Item';
+            const msg = event.payload?.message || `The seller approved your bid for "${title}". Ready for handover!`;
+            showToast('success', '🎉 BID APPROVED!', msg);
+            sendBrowserPush('🎉 CampusBid — Bid Approved!', msg);
+            playAlertChime('won');
+          }
+        } else if (event.type === 'AUCTION_REJECTED') {
+          if (isForMe) {
+            const title = event.payload?.title || 'Auction Item';
+            const msg = event.payload?.message || `The seller rejected the final bid on "${title}".`;
+            showToast('error', 'Bid Not Approved', msg);
+            sendBrowserPush('CampusBid — Bid Rejected', msg);
+            playAlertChime('lost');
+          }
+        } else if (event.type === 'DEADLINE_EXTENDED') {
           showToast('warning', '🛡️ Anti-Sniping Protection', 'A bid landed in the final 30s! Deadline extended by +60s.');
         } else if (event.type === 'OUTBID') {
-          if (user && event.targetUserId === user.id) {
-            showToast('error', '⚠️ You Were Outbid!', `New high bid of ₹${event.payload?.newPrice}.`);
+          if (isForMe) {
+            const title = event.payload?.title || 'Item';
+            const msg = `You were outbid! New high bid of ₹${event.payload?.newPrice}.`;
+            showToast('error', '⚠️ You Were Outbid!', msg);
+            sendBrowserPush('⚠️ Outbid on CampusBid', `New highest bid of ₹${event.payload?.newPrice} on "${title}".`);
+            playAlertChime('lost');
           }
         } else if (event.type === 'AUCTION_ENDED') {
-          if (user && event.targetUserId === user.id) {
+          if (isForMe) {
             showToast('info', 'Auction Ended', `Status: ${event.payload?.status}`);
           }
         }
@@ -106,13 +205,17 @@ export function App() {
     };
 
     return () => eventSource.close();
-  }, [fetchNotifications, showToast, user]);
+  }, [fetchNotifications, showToast, user, token, sendBrowserPush, playAlertChime]);
 
   const handleLoginSuccess = (loggedInUser: User, authToken: string) => {
     setUser(loggedInUser);
     setToken(authToken);
     localStorage.setItem('campus_auction_user', JSON.stringify(loggedInUser));
     localStorage.setItem('campus_auction_token', authToken);
+
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
 
     if (loggedInUser.role === 'seller') {
       setActiveTab('sell');

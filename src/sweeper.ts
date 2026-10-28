@@ -27,7 +27,7 @@ export function startAuctionSweeper(db: Db, intervalMs: number = 5000): () => vo
             { _id: a._id, version: a.version },
             {
               $set: {
-                status: 'pending_approval',
+                status: 'closed_sold',
                 winningBidId: winningBid?._id,
                 winnerId: a.leaderId,
                 updatedAt: now,
@@ -43,7 +43,7 @@ export function startAuctionSweeper(db: Db, intervalMs: number = 5000): () => vo
             type: 'AUCTION_ENDED_SELLER',
             title: 'Auction Ended — Action Required',
             message: `"${a.title}" closed with winning bid ₹${a.currentPrice}. Please approve or reject the outcome.`,
-            payload: { auctionId: a._id, amount: a.currentPrice, winnerId: a.leaderId },
+            payload: { auctionId: a._id, amount: a.currentPrice, winnerId: a.leaderId, title: a.title },
             createdAt: now,
           });
 
@@ -51,28 +51,75 @@ export function startAuctionSweeper(db: Db, intervalMs: number = 5000): () => vo
           await cols.notifications.insertOne({
             _id: new ObjectId(),
             userId: a.leaderId,
-            type: 'AUCTION_WON_PENDING',
-            title: 'You Won the Auction!',
-            message: `Your bid of ₹${a.currentPrice} is the highest for "${a.title}". Waiting for seller approval.`,
-            payload: { auctionId: a._id, amount: a.currentPrice },
+            type: 'AUCTION_WON',
+            title: '🏆 You Won the Auction!',
+            message: `Congratulations! Your bid of ₹${a.currentPrice} is the highest winning bid for "${a.title}". Waiting for seller pickup approval.`,
+            payload: { auctionId: a._id, amount: a.currentPrice, title: a.title },
             createdAt: now,
           });
 
-          await eventHub.emitAll([
+          // Notify all other bidders that the auction has ended and they were outbid
+          const outbidBids = await cols.bids
+            .find({ auctionId: a._id, bidderId: { $ne: a.leaderId } })
+            .toArray();
+          const uniqueOutbidIds = Array.from(new Set(outbidBids.map((b) => b.bidderId.toString()))).map((id) => new ObjectId(id));
+
+          for (const loserId of uniqueOutbidIds) {
+            await cols.notifications.insertOne({
+              _id: new ObjectId(),
+              userId: loserId,
+              type: 'AUCTION_LOST',
+              title: '⏱️ Auction Ended — Outbid',
+              message: `"${a.title}" has closed. Another student placed the winning bid of ₹${a.currentPrice}.`,
+              payload: { auctionId: a._id, finalPrice: a.currentPrice, title: a.title },
+              createdAt: now,
+            });
+          }
+
+          // Emit real-time SSE push notifications for Seller, Winner, and Losers
+          const eventsToEmit: any[] = [
             {
               type: 'AUCTION_ENDED',
               targetUserId: a.sellerId,
               auctionId: a._id,
-              payload: { status: 'pending_approval', finalPrice: a.currentPrice, winnerId: a.leaderId },
+              payload: { status: 'pending_approval', finalPrice: a.currentPrice, winnerId: a.leaderId, title: a.title },
             },
-          ]);
+            {
+              type: 'AUCTION_WON',
+              targetUserId: a.leaderId,
+              auctionId: a._id,
+              payload: {
+                status: 'won',
+                finalPrice: a.currentPrice,
+                amount: a.currentPrice,
+                title: a.title,
+                message: `Congratulations! Your bid of ₹${a.currentPrice} won "${a.title}"!`,
+              },
+            },
+          ];
+
+          for (const loserId of uniqueOutbidIds) {
+            eventsToEmit.push({
+              type: 'AUCTION_LOST',
+              targetUserId: loserId,
+              auctionId: a._id,
+              payload: {
+                status: 'lost',
+                finalPrice: a.currentPrice,
+                title: a.title,
+                message: `Auction for "${a.title}" ended. You were outbid.`,
+              },
+            });
+          }
+
+          await eventHub.emitAll(eventsToEmit);
         } else {
           // No bids placed -> unsold
           await cols.auctions.updateOne(
             { _id: a._id, version: a.version },
             {
               $set: {
-                status: 'unsold',
+                status: 'closed_unsold',
                 outcomeReason: 'No bids received prior to deadline',
                 updatedAt: now,
               },

@@ -76,6 +76,10 @@ export async function ensureIndexes(db: Db): Promise<void> {
     { category: 1, condition: 1, currentPrice: 1 },
     { name: 'auctions_category_condition_price' }
   );
+  await collections.auctions.createIndex(
+    { sellerId: 1, status: 1 },
+    { name: 'auctions_sellerId_status' }
+  );
 
   // 3. bids:
   // - unique partial index on { bidderId, idempotencyKey } (only indexes docs where idempotencyKey exists)

@@ -28,6 +28,39 @@ export const MyBidsTab: React.FC<MyBidsTabProps> = ({
     lost: [],
   });
 
+  const [selectedSellerModalAuction, setSelectedSellerModalAuction] = useState<Auction | null>(null);
+  const [sellerContact, setSellerContact] = useState<{
+    name: string;
+    collegeEmail: string;
+    department: string;
+    year: string;
+    phone: string | null;
+  } | null>(null);
+  const [loadingSeller, setLoadingSeller] = useState(false);
+
+  const handleViewSeller = async (auction: Auction) => {
+    setSelectedSellerModalAuction(auction);
+    setSellerContact(null);
+    setLoadingSeller(true);
+    try {
+      const res = await fetch(`/api/buyer/auctions/${auction._id}/seller`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.ok && data.seller) {
+        setSellerContact(data.seller);
+      } else {
+        onShowToast('error', 'Seller Details', data.error || 'Failed to retrieve seller contact details');
+        setSelectedSellerModalAuction(null);
+      }
+    } catch {
+      onShowToast('error', 'Error', 'Failed to retrieve seller contact details');
+      setSelectedSellerModalAuction(null);
+    } finally {
+      setLoadingSeller(false);
+    }
+  };
+
   const fetchMyBids = async () => {
     if (!token) return;
     try {
@@ -48,51 +81,11 @@ export const MyBidsTab: React.FC<MyBidsTabProps> = ({
 
   useEffect(() => {
     fetchMyBids();
-    const interval = setInterval(fetchMyBids, 5000);
+    const interval = setInterval(fetchMyBids, 2500);
     return () => clearInterval(interval);
   }, [token]);
 
   const activeBids = [...bidsData.leading, ...bidsData.outbid];
-
-  // If user has no active bids yet, supplement with mock items matching Image 1 for demo purposes
-  const displayActive = activeBids.length > 0 ? activeBids : [
-    {
-      _id: 'sample-kb',
-      title: 'Mechanical Keyboard (Brown Switches)',
-      category: 'Electronics',
-      currentPrice: 800,
-      startPrice: 800,
-      bidCount: 5,
-      closesAt: new Date(Date.now() + 27 * 60 * 1000 + 4 * 1000).toISOString(),
-      images: ['https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=400&q=80'],
-      isHighest: true,
-      yourBid: 800,
-    },
-    {
-      _id: 'sample-cycle',
-      title: 'Campus Commuter Cycle (10-Speed)',
-      category: 'Bicycles',
-      currentPrice: 1200,
-      startPrice: 1200,
-      bidCount: 8,
-      closesAt: new Date(Date.now() + 72 * 60 * 1000).toISOString(),
-      images: ['https://images.unsplash.com/photo-1485965120184-e220f721d03e?auto=format&fit=crop&w=400&q=80'],
-      isHighest: false,
-      yourBid: 1100,
-    },
-    {
-      _id: 'sample-laptop',
-      title: 'HP Laptop (i5, 8GB RAM)',
-      category: 'Electronics',
-      currentPrice: 6000,
-      startPrice: 6000,
-      bidCount: 12,
-      closesAt: new Date(Date.now() + 205 * 60 * 1000).toISOString(),
-      images: ['https://images.unsplash.com/photo-1496181133206-80ce9b88a853?auto=format&fit=crop&w=400&q=80'],
-      isHighest: false,
-      yourBid: 5500,
-    },
-  ];
 
   const formatCountdown = (closesAtStr: string) => {
     const diff = new Date(closesAtStr).getTime() - Date.now();
@@ -141,7 +134,7 @@ export const MyBidsTab: React.FC<MyBidsTabProps> = ({
             }}
           >
             <span>🏆</span>
-            <span>Won Items ({bidsData.won.length || 2})</span>
+            <span>Won Items ({bidsData.won.length})</span>
           </button>
           <button
             className={`seller-menu-btn ${sidebarTab === 'lost' ? 'active' : ''}`}
@@ -151,7 +144,7 @@ export const MyBidsTab: React.FC<MyBidsTabProps> = ({
             }}
           >
             <span>⏱️</span>
-            <span>Lost Items ({bidsData.lost.length || 5})</span>
+            <span>Lost Items ({bidsData.lost.length})</span>
           </button>
         </aside>
 
@@ -166,172 +159,402 @@ export const MyBidsTab: React.FC<MyBidsTabProps> = ({
             </p>
           </div>
 
-          {/* Subtabs bar matching Screen 5: Active (3), Won (2), Lost (5) */}
+          {/* Subtabs bar matching Screen 5: Active, Won, Lost */}
           <div className="bids-filter-bar">
             <button
-              className={`bid-filter-chip ${subTab === 'active' ? 'active' : ''}`}
-              onClick={() => setSubTab('active')}
+              className={`bid-filter-chip ${subTab === 'active' && sidebarTab !== 'watching' ? 'active' : ''}`}
+              onClick={() => {
+                setSubTab('active');
+                setSidebarTab('my_bids');
+              }}
             >
-              Active ({displayActive.length})
+              Active ({activeBids.length})
             </button>
             <button
-              className={`bid-filter-chip ${subTab === 'won' ? 'active' : ''}`}
-              onClick={() => setSubTab('won')}
+              className={`bid-filter-chip ${subTab === 'won' && sidebarTab !== 'watching' ? 'active' : ''}`}
+              onClick={() => {
+                setSubTab('won');
+                setSidebarTab('won');
+              }}
             >
-              Won ({bidsData.won.length || 2})
+              Won ({bidsData.won.length})
             </button>
             <button
-              className={`bid-filter-chip ${subTab === 'lost' ? 'active' : ''}`}
-              onClick={() => setSubTab('lost')}
+              className={`bid-filter-chip ${subTab === 'lost' && sidebarTab !== 'watching' ? 'active' : ''}`}
+              onClick={() => {
+                setSubTab('lost');
+                setSidebarTab('lost');
+              }}
             >
-              Lost ({bidsData.lost.length || 5})
+              Lost ({bidsData.lost.length})
             </button>
           </div>
 
-          {/* Bids List */}
-          {subTab === 'active' && (
-            <div className="bids-list">
-              {displayActive.map((item: any) => {
-                const img = item.images && item.images.length > 0
-                  ? item.images[0]
-                  : 'https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=400&q=80';
-                const cur = item.currentPrice || item.startPrice;
-                const isLeading = item.isHighest !== undefined ? item.isHighest : bidsData.leading.some((l) => l._id === item._id);
-                const yourBid = item.yourBid || (isLeading ? cur : cur - 100);
+          {/* Watching View */}
+          {sidebarTab === 'watching' && (
+            <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: 'var(--text-muted)' }}>
+              <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>❤️</div>
+              <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.35rem' }}>
+                Your Watchlist
+              </h3>
+              <p style={{ fontSize: '0.88rem', maxWidth: '380px', margin: '0 auto' }}>
+                Auctions you are monitoring will appear here with instant live alerts.
+              </p>
+            </div>
+          )}
 
-                return (
-                  <div
-                    key={item._id}
-                    className="bid-row-card"
-                    onClick={() => {
-                      if (!item._id.startsWith('sample-')) onSelectAuction(item._id);
-                    }}
-                  >
-                    <div className="bid-row-left">
-                      <img src={img} alt={item.title} className="bid-row-thumb" />
-                      <div className="bid-row-info">
-                        <div className="bid-row-title">{item.title}</div>
-                        <div className="bid-row-pricing">
-                          <span className="bid-row-cur-bid">Current Bid: ₹{cur.toLocaleString()}</span>
-                          <span>·</span>
-                          <span className={`bid-row-your-bid ${isLeading ? 'highest' : 'outbid'}`}>
-                            Your Bid: ₹{yourBid.toLocaleString()} {isLeading ? '(Highest)' : ''}
-                          </span>
+          {/* Active Bids List */}
+          {sidebarTab !== 'watching' && subTab === 'active' && (
+            <div className="bids-list">
+              {activeBids.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: 'var(--text-muted)' }}>
+                  <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>🏷️</div>
+                  <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.35rem' }}>
+                    No Active Bids
+                  </h3>
+                  <p style={{ fontSize: '0.88rem', maxWidth: '380px', margin: '0 auto' }}>
+                    You don't have any active bids on live auctions. Browse the live listings to start bidding!
+                  </p>
+                </div>
+              ) : (
+                activeBids.map((item: any) => {
+                  const img = item.images && item.images.length > 0 && item.images[0]
+                    ? item.images[0]
+                    : 'https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=400&q=80';
+                  const cur = item.currentPrice || item.startPrice;
+                  const isLeading = item.isHighest !== undefined ? item.isHighest : bidsData.leading.some((l) => l._id === item._id);
+                  const yourBid = item.yourBid || (isLeading ? cur : cur);
+
+                  return (
+                    <div
+                      key={item._id}
+                      className="bid-row-card"
+                      onClick={() => onSelectAuction(item._id)}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <div className="bid-row-left">
+                        <img src={img} alt={item.title} className="bid-row-thumb" />
+                        <div className="bid-row-info">
+                          <div className="bid-row-title">{item.title}</div>
+                          <div className="bid-row-pricing">
+                            <span className="bid-row-cur-bid">Current Bid: ₹{cur.toLocaleString()}</span>
+                            <span>·</span>
+                            <span className={`bid-row-your-bid ${isLeading ? 'highest' : 'outbid'}`}>
+                              Your Bid: ₹{yourBid.toLocaleString()} {isLeading ? '(Highest)' : ''}
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="bid-row-right">
-                      <div className="bid-row-timer">
-                        <span>⏱</span>
-                        <span>{formatCountdown(item.closesAt)}</span>
+                      <div className="bid-row-right">
+                        <div className="bid-row-timer">
+                          <span>⏱</span>
+                          <span>{formatCountdown(item.closesAt)}</span>
+                        </div>
+
+                        {isLeading ? (
+                          <button
+                            className="btn-outline-danger"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleWithdraw(item.title);
+                            }}
+                          >
+                            Withdraw
+                          </button>
+                        ) : (
+                          <button
+                            className="btn-outline-action"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectAuction(item._id);
+                            }}
+                          >
+                            Increase Bid
+                          </button>
+                        )}
                       </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
 
-                      {isLeading ? (
-                        <button
-                          className="btn-outline-danger"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleWithdraw(item.title);
+          {/* Won Items List */}
+          {sidebarTab !== 'watching' && subTab === 'won' && (
+            <div className="bids-list">
+              {bidsData.won.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: 'var(--text-muted)' }}>
+                  <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>🏆</div>
+                  <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.35rem' }}>
+                    No Won Auctions Yet
+                  </h3>
+                  <p style={{ fontSize: '0.88rem', maxWidth: '380px', margin: '0 auto' }}>
+                    When you place the winning bid on an auction and it concludes, it will appear here with handover & pickup status!
+                  </p>
+                </div>
+              ) : (
+                bidsData.won.map((item: any) => {
+                  const img = item.images && item.images.length > 0 && item.images[0]
+                    ? item.images[0]
+                    : 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=400&q=80';
+                  const finalPrice = item.currentPrice || item.yourBid || item.startPrice;
+                  const isApproved = item.approvalDecision === 'approved' || item.status === 'sold';
+                  const isReserved = item.status === 'reserved';
+
+                  let statusBadge = '✓ Won — Awaiting Seller Approval';
+                  let statusBg = '#fffbeb';
+                  let statusColor = '#d97706';
+                  let pickupInfo = 'Awaiting seller review';
+
+                  if (isApproved) {
+                    statusBadge = '✓ Won & Approved';
+                    statusBg = '#ecfdf5';
+                    statusColor = '#059669';
+                    pickupInfo = item.handoverNotes || 'Coordinate pickup with seller';
+                  } else if (isReserved) {
+                    statusBadge = '✓ Reserved for Pickup';
+                    statusBg = '#f0f9ff';
+                    statusColor = '#0284c7';
+                    pickupInfo = item.handoverNotes || 'Pickup scheduled';
+                  }
+
+                  return (
+                    <div
+                      key={item._id}
+                      className="bid-row-card"
+                      onClick={() => onSelectAuction(item._id)}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <div className="bid-row-left">
+                        <img src={img} alt={item.title} className="bid-row-thumb" />
+                        <div className="bid-row-info">
+                          <div className="bid-row-title">{item.title}</div>
+                          <div className="bid-row-pricing">
+                            <span className="bid-row-cur-bid">Winning Bid: ₹{finalPrice.toLocaleString()}</span>
+                            <span>·</span>
+                            <span className="bid-row-your-bid highest">{statusBadge}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="bid-row-right" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.45rem' }}>
+                        <div
+                          style={{
+                            fontSize: '0.82rem',
+                            color: statusColor,
+                            background: statusBg,
+                            padding: '0.35rem 0.65rem',
+                            borderRadius: '6px',
+                            fontWeight: 600,
+                            border: `1px solid ${statusColor}33`,
                           }}
                         >
-                          Withdraw
-                        </button>
-                      ) : (
+                          {pickupInfo}
+                        </div>
                         <button
                           className="btn-outline-action"
+                          style={{ padding: '0.25rem 0.65rem', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (!item._id.startsWith('sample-')) onSelectAuction(item._id);
-                            else onShowToast('info', 'Increase Bid', 'Navigating to live bidding console...');
+                            handleViewSeller(item);
                           }}
                         >
-                          Increase Bid
+                          <span>👤</span>
+                          <span>View Seller Details</span>
                         </button>
-                      )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           )}
 
-          {subTab === 'won' && (
+          {/* Lost Items List */}
+          {sidebarTab !== 'watching' && subTab === 'lost' && (
             <div className="bids-list">
-              <div className="bid-row-card">
-                <div className="bid-row-left">
-                  <img
-                    src="https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=400&q=80"
-                    alt="Wireless Earbuds"
-                    className="bid-row-thumb"
-                  />
-                  <div className="bid-row-info">
-                    <div className="bid-row-title">Wireless Earbuds (Active Noise Cancelling)</div>
-                    <div className="bid-row-pricing">
-                      <span className="bid-row-cur-bid">Winning Bid: ₹950</span>
-                      <span>·</span>
-                      <span className="bid-row-your-bid highest">✓ Won & Approved</span>
-                    </div>
-                  </div>
+              {bidsData.lost.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: 'var(--text-muted)' }}>
+                  <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>⏱️</div>
+                  <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.35rem' }}>
+                    No Lost Auctions
+                  </h3>
+                  <p style={{ fontSize: '0.88rem', maxWidth: '380px', margin: '0 auto' }}>
+                    Auctions where you were outbid or that ended without a winning bid will appear here.
+                  </p>
                 </div>
-                <div className="bid-row-right">
-                  <div style={{ fontSize: '0.82rem', color: '#059669', background: '#ecfdf5', padding: '0.35rem 0.65rem', borderRadius: '6px', fontWeight: 600 }}>
-                    Pickup: Tech Block 2
-                  </div>
-                </div>
-              </div>
+              ) : (
+                bidsData.lost.map((item: any) => {
+                  const img = item.images && item.images.length > 0 && item.images[0]
+                    ? item.images[0]
+                    : 'https://images.unsplash.com/photo-1518455027359-f3f8164ba6bd?auto=format&fit=crop&w=400&q=80';
+                  const cur = item.currentPrice || item.startPrice;
+                  const yourBid = item.yourBid || cur;
 
-              <div className="bid-row-card">
-                <div className="bid-row-left">
-                  <img
-                    src="https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80"
-                    alt="Data Structures Textbook"
-                    className="bid-row-thumb"
-                  />
-                  <div className="bid-row-info">
-                    <div className="bid-row-title">Data Structures Textbook (C++ Edition)</div>
-                    <div className="bid-row-pricing">
-                      <span className="bid-row-cur-bid">Winning Bid: ₹200</span>
-                      <span>·</span>
-                      <span className="bid-row-your-bid highest">✓ Reserved</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="bid-row-right">
-                  <div style={{ fontSize: '0.82rem', color: '#059669', background: '#ecfdf5', padding: '0.35rem 0.65rem', borderRadius: '6px', fontWeight: 600 }}>
-                    Coordinate with seller
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+                  let reasonLabel = 'Outbid';
+                  if (item.status === 'unsold') {
+                    reasonLabel = 'Unsold';
+                  } else if (item.approvalDecision === 'rejected') {
+                    reasonLabel = 'Rejected by Seller';
+                  } else if (item.status === 'closed') {
+                    reasonLabel = 'Auction Closed';
+                  }
 
-          {subTab === 'lost' && (
-            <div className="bids-list">
-              <div className="bid-row-card">
-                <div className="bid-row-left">
-                  <img
-                    src="https://images.unsplash.com/photo-1518455027359-f3f8164ba6bd?auto=format&fit=crop&w=400&q=80"
-                    alt="Study Table"
-                    className="bid-row-thumb"
-                  />
-                  <div className="bid-row-info">
-                    <div className="bid-row-title">Study Table (Wooden)</div>
-                    <div className="bid-row-pricing">
-                      <span className="bid-row-cur-bid">Final Price: ₹500</span>
-                      <span>·</span>
-                      <span style={{ color: '#64748b', fontSize: '0.8rem' }}>Your Bid: ₹450</span>
+                  return (
+                    <div
+                      key={item._id}
+                      className="bid-row-card"
+                      onClick={() => onSelectAuction(item._id)}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <div className="bid-row-left">
+                        <img src={img} alt={item.title} className="bid-row-thumb" />
+                        <div className="bid-row-info">
+                          <div className="bid-row-title">{item.title}</div>
+                          <div className="bid-row-pricing">
+                            <span className="bid-row-cur-bid">Final Price: ₹{cur.toLocaleString()}</span>
+                            <span>·</span>
+                            <span style={{ color: '#64748b', fontSize: '0.8rem' }}>
+                              Your Bid: ₹{yourBid.toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="bid-row-right">
+                        <span
+                          style={{
+                            fontSize: '0.82rem',
+                            color: '#94a3b8',
+                            background: 'var(--bg-secondary)',
+                            padding: '0.35rem 0.65rem',
+                            borderRadius: '6px',
+                            fontWeight: 500,
+                          }}
+                        >
+                          {reasonLabel}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                </div>
-                <div className="bid-row-right">
-                  <span style={{ fontSize: '0.82rem', color: '#94a3b8' }}>Auction Ended</span>
-                </div>
-              </div>
+                  );
+                })
+              )}
             </div>
           )}
         </main>
       </div>
+
+      {/* Seller Contact Details Modal (Requirement 4) */}
+      {selectedSellerModalAuction && (
+        <div
+          className="modal-overlay"
+          onClick={() => setSelectedSellerModalAuction(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '1rem',
+          }}
+        >
+          <div
+            className="modal-card"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff',
+              borderRadius: '12px',
+              maxWidth: '460px',
+              width: '100%',
+              padding: '1.75rem',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '1.35rem' }}>👤</span>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0 }}>Seller Contact Details</h3>
+              </div>
+              <button
+                onClick={() => setSelectedSellerModalAuction(null)}
+                style={{ background: 'none', border: 'none', fontSize: '1.25rem', cursor: 'pointer', color: '#64748b' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <p style={{ fontSize: '0.86rem', color: '#64748b', marginBottom: '1.25rem' }}>
+              Item won: <strong>{selectedSellerModalAuction.title}</strong>
+            </p>
+
+            {loadingSeller ? (
+              <div style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>
+                Loading verified seller contact...
+              </div>
+            ) : sellerContact ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                <div style={{ background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>
+                    Seller Name
+                  </div>
+                  <div style={{ fontSize: '1rem', fontWeight: 600, color: '#0f172a' }}>{sellerContact.name}</div>
+                </div>
+
+                <div style={{ background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>
+                    College Email
+                  </div>
+                  <div style={{ fontSize: '0.95rem', fontWeight: 500, color: '#2563eb' }}>
+                    <a href={`mailto:${sellerContact.collegeEmail}`} style={{ textDecoration: 'none', color: '#2563eb' }}>
+                      {sellerContact.collegeEmail}
+                    </a>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                  <div style={{ background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>
+                      Department
+                    </div>
+                    <div style={{ fontSize: '0.92rem', fontWeight: 600, color: '#0f172a' }}>{sellerContact.department}</div>
+                  </div>
+                  <div style={{ background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>
+                      Year
+                    </div>
+                    <div style={{ fontSize: '0.92rem', fontWeight: 600, color: '#0f172a' }}>{sellerContact.year}</div>
+                  </div>
+                </div>
+
+                <div style={{ background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>
+                    Phone Number
+                  </div>
+                  <div style={{ fontSize: '0.95rem', fontWeight: 600, color: sellerContact.phone ? '#059669' : '#94a3b8' }}>
+                    {sellerContact.phone || 'Phone not shared by seller'}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '1.5rem', color: '#ef4444' }}>
+                Unable to load seller contact information.
+              </div>
+            )}
+
+            <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                className="btn-primary"
+                onClick={() => setSelectedSellerModalAuction(null)}
+                style={{ padding: '0.5rem 1.25rem', borderRadius: '6px' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
