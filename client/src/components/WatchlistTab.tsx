@@ -241,37 +241,18 @@ export const WatchlistTab: React.FC<WatchlistTabProps> = ({
 
   return (
     <div className="watchlist-tab-container">
-      {/* Hero Header */}
-      <div className="watchlist-hero">
-        <div className="watchlist-hero-text">
-          <div className="watchlist-badge">
-            <span>⚡</span> Automated Campus Bidding & Alerts
-          </div>
-          <h2>Never Miss What You Need</h2>
-          <p>
-            Set saved-search watches for calculators, lab equipment, bikes, or textbooks.
-            Optionally authorize an <strong>Auto-Bid Budget</strong> — CampusBid will automatically
-            place proxy bids within your limit the moment a student lists a match!
-          </p>
-        </div>
-
-        {/* Browser Push Permission Quick-Card */}
-        <div className="push-permission-box">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            <span style={{ fontSize: '1.4rem' }}>🔔</span>
-            <div>
-              <strong style={{ fontSize: '0.88rem', color: '#f8fafc', display: 'block' }}>Desktop Push Alerts</strong>
-              <span style={{ fontSize: '0.78rem', color: '#94a3b8' }}>
-                {pushStatus === 'granted' ? 'Notifications active' : 'Get notified even if tab is in background'}
-              </span>
-            </div>
-          </div>
+      {/* Top Header Bar */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+        <h2 style={{ fontSize: '1.4rem', fontWeight: 700, margin: 0, color: '#f8fafc' }}>
+          Saved Watches
+        </h2>
+        <div>
           {pushStatus !== 'granted' ? (
             <button type="button" className="btn-enable-push" onClick={handleRequestPush}>
-              Enable Alerts
+              🔔 Enable Push Alerts
             </button>
           ) : (
-            <span className="push-granted-pill">✓ Enabled</span>
+            <span className="push-granted-pill">✓ Alerts Enabled</span>
           )}
         </div>
       </div>
@@ -293,12 +274,11 @@ export const WatchlistTab: React.FC<WatchlistTabProps> = ({
               <input
                 type="text"
                 className="custom-input"
-                placeholder="e.g. scientific calculator, casio, fx-991"
+                placeholder="e.g. calculator, bicycle, textbook"
                 value={keywords}
                 onChange={(e) => setKeywords(e.target.value)}
                 required
               />
-              <span className="input-hint">Matches title and description terms</span>
             </div>
 
             <div className="form-row-2">
@@ -341,12 +321,8 @@ export const WatchlistTab: React.FC<WatchlistTabProps> = ({
               <div className="autobid-toggle-header">
                 <div className="autobid-toggle-info">
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    <span style={{ fontSize: '1.1rem' }}>⚡</span>
                     <strong>Auto-bid for me when listed</strong>
                   </div>
-                  <p>
-                    Server will place minimum valid bids automatically, raising only as needed up to your budget.
-                  </p>
                 </div>
                 <label className="switch-toggle">
                   <input
@@ -374,9 +350,6 @@ export const WatchlistTab: React.FC<WatchlistTabProps> = ({
                         required={autoBid}
                       />
                     </div>
-                    <span className="input-hint highlight-hint">
-                      🔒 Hard limit: CampusBid will never place a bid exceeding ₹{maxBudget || '0'}.
-                    </span>
                   </div>
                 </div>
               ) : (
@@ -393,7 +366,6 @@ export const WatchlistTab: React.FC<WatchlistTabProps> = ({
                       onChange={(e) => setMaxPrice(e.target.value)}
                     />
                   </div>
-                  <span className="input-hint">Only notify if starting price is at or below this amount</span>
                 </div>
               )}
             </div>
@@ -406,7 +378,7 @@ export const WatchlistTab: React.FC<WatchlistTabProps> = ({
               {submitting
                 ? 'Processing...'
                 : autoBid
-                ? '⚡ Review & Authorize Auto-Bid'
+                ? 'Save Auto-Bid'
                 : '+ Set Watch Alert'}
             </button>
           </form>

@@ -346,20 +346,6 @@ export const AiAssistantTab: React.FC<AiAssistantTabProps> = ({
 
   return (
     <div className="assistant-page-container">
-      {/* Top Banner */}
-      <div className="assistant-hero-banner">
-        <div className="assistant-hero-content">
-          <div className="assistant-hero-badge">
-            <span className="sparkle-icon">✨</span> Gemini 2.5 Powered Assistant & Alerts
-          </div>
-          <h2>CampusBid AI Copilot & Watcher</h2>
-          <p>
-            Find hidden gems across campus, prepare smart bids with safety limits, and get notified
-            instantly the second your wishlist items are posted.
-          </p>
-        </div>
-      </div>
-
       <div className="assistant-split-grid">
         {/* =========================================================
             LEFT COLUMN: AI CHAT WITH PROPOSALS & LISTING CARDS
@@ -370,10 +356,6 @@ export const AiAssistantTab: React.FC<AiAssistantTabProps> = ({
               <span className="chat-bot-avatar">🤖</span>
               <div>
                 <h3>Assistant Chat</h3>
-                <span className="chat-status-indicator">
-                  <span className="status-dot-pulse"></span>
-                  Ready to assist (non-destructive)
-                </span>
               </div>
             </div>
             <button
@@ -533,11 +515,6 @@ export const AiAssistantTab: React.FC<AiAssistantTabProps> = ({
                                   )}
                                 </div>
                               )}
-
-                              <p className="proposal-safety-note">
-                                🔒 <strong>Safety Rule:</strong> Nothing runs without your consent.
-                                {isPending && ' Press Approve to execute this action through our secure backend.'}
-                              </p>
                             </div>
 
                             {/* Action Buttons for Pending Proposal */}
@@ -615,9 +592,6 @@ export const AiAssistantTab: React.FC<AiAssistantTabProps> = ({
           <div className="watches-panel-header">
             <div>
               <h3>Never Miss What You Need</h3>
-              <p className="watches-header-sub">
-                Saved alerts that notify you the moment a student lists what you want.
-              </p>
             </div>
             <span className="watches-count-badge">
               {activeWatchesCount} / 10 Active
@@ -626,14 +600,9 @@ export const AiAssistantTab: React.FC<AiAssistantTabProps> = ({
 
           {/* Desktop Push Notification Permission Card */}
           <div className="push-permission-card">
-            <div className="permission-card-icon">🔔</div>
-            <div className="permission-card-text">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+              <span style={{ fontSize: '1.2rem' }}>🔔</span>
               <strong>Desktop & Background Alerts</strong>
-              <p>
-                {browserPushStatus === 'granted'
-                  ? 'Browser notifications are ENABLED. You will receive popup alerts even when this tab is in the background.'
-                  : 'Receive system popup alerts whenever an auction matching your keywords is published.'}
-              </p>
             </div>
             {browserPushStatus !== 'granted' && (
               <button
