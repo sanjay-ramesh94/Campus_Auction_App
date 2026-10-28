@@ -961,19 +961,24 @@ async function startDevServer() {
     }
 
     // Closing: Approve or Reject winning bid (Seller only)
-    if (url.pathname.startsWith('/api/seller/auctions/') && url.pathname.endsWith('/close-action') && req.method === 'POST') {
+    const closeActionMatch = url.pathname.match(/^\/api\/seller\/auctions\/([a-f0-9]{24})\/(close-action|approve|reject)$/);
+    if (closeActionMatch && req.method === 'POST') {
       const auth = getAuthUser(req);
       if (!auth) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
 
-      const parts = url.pathname.split('/');
-      const auctionId = parts[parts.length - 2];
+      const auctionId = closeActionMatch[1];
+      const actionType = closeActionMatch[2];
       const a = await cols.auctions.findOne({ _id: new ObjectId(auctionId) });
       if (!a) return sendJson(res, 404, { ok: false, error: 'Auction not found' });
       if (!a.sellerId.equals(new ObjectId(auth.userId))) {
         return sendJson(res, 403, { ok: false, error: 'Not your auction' });
       }
 
-      const { decision, reason } = await readBody(req); // 'approved' | 'rejected'
+      const body = await readBody(req).catch(() => ({}));
+      const decision = actionType === 'approve' ? 'approved' : actionType === 'reject' ? 'rejected' : body.decision;
+      const reason = body.reason;
+
+      const winnerTarget = a.winnerId || a.leaderId;
 
       if (decision === 'approved') {
         await cols.auctions.updateOne(
@@ -985,13 +990,14 @@ async function startDevServer() {
               handoverStatus: 'pending',
               updatedAt: new Date(),
             },
+            $inc: { version: 1 },
           }
         );
 
-        if (a.leaderId) {
+        if (winnerTarget) {
           await cols.notifications.insertOne({
             _id: new ObjectId(),
-            userId: a.leaderId,
+            userId: winnerTarget,
             type: 'AUCTION_APPROVED',
             title: 'Seller Approved Your Winning Bid! 🎉',
             message: `Your winning bid of ₹${a.currentPrice} for "${a.title}" was approved! Status is now Reserved. Coordinate with seller for pickup.`,
@@ -1002,7 +1008,7 @@ async function startDevServer() {
           await eventHub.emitAll([
             {
               type: 'AUCTION_APPROVED',
-              targetUserId: a.leaderId,
+              targetUserId: winnerTarget,
               auctionId: a._id,
               payload: { title: a.title, amount: a.currentPrice, sellerEmail: auth.email },
             },
@@ -1020,13 +1026,14 @@ async function startDevServer() {
               approvalReason: reason || 'Seller rejected bid',
               updatedAt: new Date(),
             },
+            $inc: { version: 1 },
           }
         );
 
-        if (a.leaderId) {
+        if (winnerTarget) {
           await cols.notifications.insertOne({
             _id: new ObjectId(),
-            userId: a.leaderId,
+            userId: winnerTarget,
             type: 'AUCTION_REJECTED',
             title: 'Bid Outcome Rejected',
             message: `The seller did not approve the winning bid for "${a.title}". Reason: ${reason || 'Reserve not met'}.`,
@@ -1037,7 +1044,7 @@ async function startDevServer() {
           await eventHub.emitAll([
             {
               type: 'AUCTION_REJECTED',
-              targetUserId: a.leaderId,
+              targetUserId: winnerTarget,
               auctionId: a._id,
               payload: { title: a.title, reason: reason || 'Reserve not met' },
             },

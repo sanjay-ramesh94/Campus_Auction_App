@@ -1054,9 +1054,50 @@ export const LiveAuctionDetail: React.FC<LiveAuctionDetailProps> = ({
               )}
             </div>
           ) : isSeller ? (
-            <div style={{ padding: '1rem', background: '#fef3c7', borderRadius: '10px', color: '#92400e', fontSize: '0.88rem', marginBottom: '1.5rem' }}>
-              ℹ️ <strong>Seller Mode:</strong> As a registered seller, bidding is disabled for you. You can review buyer offers, track countdowns, and answer questions.
-            </div>
+            isClosed && auction.sellerId === user.id && auction.bidCount > 0 ? (
+              auction.approvalDecision === 'approved' || auction.status === 'reserved' ? (
+                <div style={{ padding: '1rem', background: '#ecfdf5', borderRadius: '10px', color: '#065f46', fontSize: '0.88rem', marginBottom: '1.5rem', border: '1px solid #a7f3d0' }}>
+                  ✓ <strong>Winning Bid Approved:</strong> You approved the winning bid of ₹{curPrice}. Item is Reserved for pickup.
+                </div>
+              ) : (
+                <div style={{ padding: '1.1rem', background: '#fffbeb', borderRadius: '10px', color: '#92400e', fontSize: '0.88rem', marginBottom: '1.5rem', border: '1px solid #fde68a' }}>
+                  <div style={{ fontWeight: 700, marginBottom: '0.35rem', fontSize: '0.95rem' }}>
+                    ⏳ Auction Ended — Awaiting Your Approval
+                  </div>
+                  <p style={{ margin: '0 0 0.75rem', fontSize: '0.84rem' }}>
+                    Winning bid is <strong>₹{curPrice.toLocaleString()}</strong> ({auction.bidCount} bids placed). You can approve this transaction now to reserve the item for campus pickup.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    style={{ background: '#059669', borderColor: '#059669', padding: '0.45rem 1rem', fontSize: '0.85rem' }}
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(`/api/seller/auctions/${auction._id}/approve`, {
+                          method: 'POST',
+                          headers: { Authorization: `Bearer ${token}` },
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                          onShowToast('success', 'Sale Approved!', `Winning bid on "${auction.title}" is approved and reserved for pickup.`);
+                          fetchDetails();
+                        } else {
+                          onShowToast('error', 'Error', data.error || 'Failed to approve');
+                        }
+                      } catch {
+                        onShowToast('error', 'Error', 'Failed to connect to server');
+                      }
+                    }}
+                  >
+                    ✓ Approve Sale Now (₹{curPrice.toLocaleString()})
+                  </button>
+                </div>
+              )
+            ) : (
+              <div style={{ padding: '1rem', background: '#fef3c7', borderRadius: '10px', color: '#92400e', fontSize: '0.88rem', marginBottom: '1.5rem' }}>
+                ℹ️ <strong>Seller Mode:</strong> As a registered seller, bidding is disabled for you. You can review buyer offers, track countdowns, and answer questions.
+              </div>
+            )
           ) : (
             <div style={{ padding: '1rem', background: '#f1f5f9', borderRadius: '10px', color: '#64748b', fontSize: '0.88rem', marginBottom: '1.5rem' }}>
               🔒 <strong>Auction Closed:</strong> Bidding for this listing has concluded.

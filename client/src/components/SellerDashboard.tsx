@@ -26,6 +26,7 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
   const [viewingBuyerAuction, setViewingBuyerAuction] = useState<Auction | null>(null);
   const [buyerContact, setBuyerContact] = useState<BuyerContactDetails | null>(null);
   const [loadingBuyer, setLoadingBuyer] = useState(false);
+  const [processingAuctionId, setProcessingAuctionId] = useState<string | null>(null);
 
   // Relist modal state
   const [relistingAuction, setRelistingAuction] = useState<Auction | null>(null);
@@ -97,6 +98,45 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
       setViewingBuyerAuction(null);
     } finally {
       setLoadingBuyer(false);
+    }
+  };
+
+  // Seller approve or reject winning bid action
+  const handleCloseAction = async (auction: Auction, decision: 'approved' | 'rejected', reason?: string) => {
+    setProcessingAuctionId(auction._id);
+    try {
+      const res = await fetch(`/api/seller/auctions/${auction._id}/close-action`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ decision, reason }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        onShowToast(
+          decision === 'approved' ? 'success' : 'info',
+          decision === 'approved' ? 'Winning Bid Approved!' : 'Bid Rejected',
+          decision === 'approved'
+            ? `Winning bid on "${auction.title}" approved. Item is now Reserved for campus handover.`
+            : `Winning bid on "${auction.title}" was rejected.`
+        );
+        if (viewingBuyerAuction && viewingBuyerAuction._id === auction._id) {
+          setViewingBuyerAuction({
+            ...viewingBuyerAuction,
+            status: decision === 'approved' ? 'reserved' : 'closed',
+            approvalDecision: decision,
+          });
+        }
+        fetchSellerAuctions();
+      } else {
+        onShowToast('error', 'Action Failed', data.error || 'Could not process decision');
+      }
+    } catch {
+      onShowToast('error', 'Error', 'Failed to connect to server');
+    } finally {
+      setProcessingAuctionId(null);
     }
   };
 
@@ -633,6 +673,10 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
                       const finalPrice = item.currentPrice || item.startPrice;
                       const closedDate = new Date(item.closesAt || item.createdAt || Date.now()).toLocaleDateString();
 
+                      const isApproved = item.approvalDecision === 'approved' || item.status === 'reserved';
+                      const isRejected = item.approvalDecision === 'rejected' || item.status === 'closed' || item.status === 'cancelled';
+                      const isPendingReview = !isApproved && !isRejected;
+
                       return (
                         <div
                           key={item._id}
@@ -645,11 +689,21 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
                             <div className="bid-row-info">
                               <div className="bid-row-title">{item.title}</div>
                               <div className="bid-row-pricing">
-                                <span className="bid-row-cur-bid">Final Price: ₹{finalPrice.toLocaleString()}</span>
+                                <span className="bid-row-cur-bid">Winning Bid: ₹{finalPrice.toLocaleString()}</span>
                                 <span>·</span>
-                                <span style={{ color: '#059669', fontWeight: 600, fontSize: '0.85rem' }}>
-                                  ✓ Sold ({item.bidCount} Bids)
-                                </span>
+                                {isPendingReview ? (
+                                  <span style={{ color: '#d97706', fontWeight: 600, fontSize: '0.85rem' }}>
+                                    ⏳ Awaiting Your Approval ({item.bidCount} Bids)
+                                  </span>
+                                ) : isApproved ? (
+                                  <span style={{ color: '#059669', fontWeight: 600, fontSize: '0.85rem' }}>
+                                    ✓ Approved & Reserved ({item.bidCount} Bids)
+                                  </span>
+                                ) : (
+                                  <span style={{ color: '#dc2626', fontWeight: 600, fontSize: '0.85rem' }}>
+                                    ✕ Rejected ({item.bidCount} Bids)
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -657,17 +711,66 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
                             <span style={{ fontSize: '0.82rem', color: '#64748b' }}>
                               📅 Closed {closedDate}
                             </span>
-                            <button
-                              className="btn-primary"
-                              style={{ padding: '0.35rem 0.85rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleViewBuyer(item);
-                              }}
-                            >
-                              <span>👤</span>
-                              <span>View buyer details</span>
-                            </button>
+                            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                              {isPendingReview && (
+                                <>
+                                  <button
+                                    className="btn-primary"
+                                    style={{
+                                      padding: '0.35rem 0.75rem',
+                                      fontSize: '0.8rem',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '0.35rem',
+                                      background: '#059669',
+                                      borderColor: '#059669',
+                                    }}
+                                    disabled={processingAuctionId === item._id}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleCloseAction(item, 'approved');
+                                    }}
+                                    title="Approve winning bid and reserve item for pickup"
+                                  >
+                                    <span>✓</span>
+                                    <span>Approve</span>
+                                  </button>
+                                  <button
+                                    className="btn-outline-action"
+                                    style={{
+                                      padding: '0.35rem 0.65rem',
+                                      fontSize: '0.8rem',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '0.35rem',
+                                      color: '#dc2626',
+                                      borderColor: '#fca5a5',
+                                    }}
+                                    disabled={processingAuctionId === item._id}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const reason = window.prompt('Reason for rejection (optional):') || 'Seller rejected bid';
+                                      handleCloseAction(item, 'rejected', reason);
+                                    }}
+                                    title="Reject winning bid"
+                                  >
+                                    <span>✕</span>
+                                    <span>Reject</span>
+                                  </button>
+                                </>
+                              )}
+                              <button
+                                className="btn-outline-action"
+                                style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleViewBuyer(item);
+                                }}
+                              >
+                                <span>👤</span>
+                                <span>Buyer Details</span>
+                              </button>
+                            </div>
                           </div>
                         </div>
                       );
@@ -842,6 +945,120 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
               <div style={{ textAlign: 'center', padding: '1.5rem', color: '#ef4444' }}>
                 Unable to load buyer information.
               </div>
+            )}
+
+            {/* Seller Review / Approval Decision Panel */}
+            {viewingBuyerAuction && (
+              (() => {
+                const isApproved = viewingBuyerAuction.approvalDecision === 'approved' || viewingBuyerAuction.status === 'reserved';
+                const isRejected = viewingBuyerAuction.approvalDecision === 'rejected' || viewingBuyerAuction.status === 'closed' || viewingBuyerAuction.status === 'cancelled';
+                const isPendingReview = !isApproved && !isRejected;
+
+                if (isPendingReview) {
+                  return (
+                    <div style={{
+                      marginTop: '1.25rem',
+                      padding: '1rem',
+                      background: '#fffbeb',
+                      borderRadius: '8px',
+                      border: '1px solid #fde68a',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600, fontSize: '0.9rem', color: '#92400e', marginBottom: '0.35rem' }}>
+                        <span>⏳</span>
+                        <span>Awaiting Seller Review</span>
+                      </div>
+                      <p style={{ fontSize: '0.82rem', color: '#78350f', margin: '0 0 0.85rem' }}>
+                        Review the winning bid. Approve to confirm this transaction and reserve the item for campus handover.
+                      </p>
+                      <div style={{ display: 'flex', gap: '0.65rem' }}>
+                        <button
+                          type="button"
+                          disabled={processingAuctionId === viewingBuyerAuction._id}
+                          onClick={() => handleCloseAction(viewingBuyerAuction, 'approved')}
+                          style={{
+                            flex: 1,
+                            background: '#059669',
+                            color: '#fff',
+                            border: 'none',
+                            padding: '0.6rem 1rem',
+                            borderRadius: '6px',
+                            fontWeight: 600,
+                            fontSize: '0.88rem',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '0.4rem',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                          }}
+                        >
+                          {processingAuctionId === viewingBuyerAuction._id ? 'Approving...' : `✓ Approve Sale (₹${viewingBuyerAuction.currentPrice || viewingBuyerAuction.startPrice})`}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={processingAuctionId === viewingBuyerAuction._id}
+                          onClick={() => {
+                            const reason = window.prompt('Reason for rejection (optional):') || 'Seller rejected bid';
+                            handleCloseAction(viewingBuyerAuction, 'rejected', reason);
+                          }}
+                          style={{
+                            background: '#fff',
+                            color: '#dc2626',
+                            border: '1px solid #fca5a5',
+                            padding: '0.6rem 1rem',
+                            borderRadius: '6px',
+                            fontWeight: 600,
+                            fontSize: '0.85rem',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          ✕ Reject
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (isApproved) {
+                  return (
+                    <div style={{
+                      marginTop: '1.25rem',
+                      padding: '0.85rem 1rem',
+                      background: '#ecfdf5',
+                      borderRadius: '8px',
+                      border: '1px solid #a7f3d0',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      color: '#065f46',
+                      fontSize: '0.88rem',
+                      fontWeight: 600,
+                    }}>
+                      <span>✓</span>
+                      <span>Sale Approved — Item is Reserved for Pickup</span>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div style={{
+                    marginTop: '1.25rem',
+                    padding: '0.85rem 1rem',
+                    background: '#fef2f2',
+                    borderRadius: '8px',
+                    border: '1px solid #fecaca',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    color: '#991b1b',
+                    fontSize: '0.88rem',
+                    fontWeight: 600,
+                  }}>
+                    <span>✕</span>
+                    <span>Winning Bid Rejected</span>
+                  </div>
+                );
+              })()
             )}
 
             <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end' }}>

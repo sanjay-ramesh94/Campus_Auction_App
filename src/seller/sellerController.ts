@@ -99,8 +99,8 @@ export async function getWinningBuyerDetails(
     return { ok: false, statusCode: 403, error: 'Forbidden: You do not own this auction' };
   }
 
-  // Status must be closed_sold (or sold)
-  const isSold = auction.status === 'closed_sold' || auction.status === 'sold';
+  // Status must be closed_sold, sold, pending_approval, or reserved
+  const isSold = ['closed_sold', 'sold', 'pending_approval', 'reserved'].includes(auction.status);
   if (!isSold) {
     return { ok: false, statusCode: 403, error: 'Forbidden: Buyer details are only available for sold auctions' };
   }
@@ -265,3 +265,118 @@ export async function getSellerDetailsForWinner(
     },
   };
 }
+
+/**
+ * 5. POST /api/seller/auctions/:id/approve
+ * Approves the winning bidder's outcome, transitioning status to 'reserved'.
+ * Rule: Caller must own the auction AND status must be closed_sold or pending_approval.
+ */
+export async function approveAuctionOutcome(
+  db: Db,
+  sellerId: ObjectId,
+  auctionId: ObjectId
+): Promise<ControllerResult<Auction>> {
+  const cols = getCollections(db);
+  const auction = await cols.auctions.findOne({ _id: auctionId });
+
+  if (!auction) {
+    return { ok: false, statusCode: 404, error: 'Auction not found' };
+  }
+
+  if (!auction.sellerId.equals(sellerId)) {
+    return { ok: false, statusCode: 403, error: 'Forbidden: You do not own this auction' };
+  }
+
+  const isEligible = ['closed_sold', 'sold', 'pending_approval', 'reserved'].includes(auction.status);
+  if (!isEligible) {
+    return { ok: false, statusCode: 400, error: 'Only closed auctions with winning bids can be approved' };
+  }
+
+  const now = new Date();
+  await cols.auctions.updateOne(
+    { _id: auction._id },
+    {
+      $set: {
+        status: 'reserved',
+        approvalDecision: 'approved',
+        handoverStatus: 'pending',
+        updatedAt: now,
+      },
+      $inc: { version: 1 },
+    }
+  );
+
+  const winnerId = auction.winnerId || auction.leaderId;
+  if (winnerId) {
+    await cols.notifications.insertOne({
+      _id: new ObjectId(),
+      userId: winnerId,
+      type: 'AUCTION_APPROVED',
+      title: '🎉 Seller Approved Your Winning Bid!',
+      message: `Your winning bid of ₹${auction.currentPrice || auction.startPrice} for "${auction.title}" was approved by the seller. Status is now Reserved for campus handover.`,
+      payload: { auctionId: auction._id, amount: auction.currentPrice || auction.startPrice, title: auction.title },
+      createdAt: now,
+    });
+  }
+
+  const updated = await cols.auctions.findOne({ _id: auction._id });
+  return { ok: true, statusCode: 200, data: updated! };
+}
+
+/**
+ * 6. POST /api/seller/auctions/:id/reject
+ * Rejects the winning bidder's outcome.
+ */
+export async function rejectAuctionOutcome(
+  db: Db,
+  sellerId: ObjectId,
+  auctionId: ObjectId,
+  reason?: string
+): Promise<ControllerResult<Auction>> {
+  const cols = getCollections(db);
+  const auction = await cols.auctions.findOne({ _id: auctionId });
+
+  if (!auction) {
+    return { ok: false, statusCode: 404, error: 'Auction not found' };
+  }
+
+  if (!auction.sellerId.equals(sellerId)) {
+    return { ok: false, statusCode: 403, error: 'Forbidden: You do not own this auction' };
+  }
+
+  const isEligible = ['closed_sold', 'sold', 'pending_approval', 'reserved'].includes(auction.status);
+  if (!isEligible) {
+    return { ok: false, statusCode: 400, error: 'Only closed auctions with winning bids can be rejected' };
+  }
+
+  const now = new Date();
+  await cols.auctions.updateOne(
+    { _id: auction._id },
+    {
+      $set: {
+        status: 'closed',
+        approvalDecision: 'rejected',
+        approvalReason: reason || 'Seller rejected bid',
+        updatedAt: now,
+      },
+      $inc: { version: 1 },
+    }
+  );
+
+  const winnerId = auction.winnerId || auction.leaderId;
+  if (winnerId) {
+    await cols.notifications.insertOne({
+      _id: new ObjectId(),
+      userId: winnerId,
+      type: 'AUCTION_REJECTED',
+      title: 'Bid Outcome Rejected',
+      message: `The seller did not approve the winning bid for "${auction.title}". Reason: ${reason || 'Seller rejected bid'}.`,
+      payload: { auctionId: auction._id, title: auction.title, reason: reason || 'Seller rejected bid' },
+      createdAt: now,
+    });
+  }
+
+  const updated = await cols.auctions.findOne({ _id: auction._id });
+  return { ok: true, statusCode: 200, data: updated! };
+}
+
